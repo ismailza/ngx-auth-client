@@ -6,5 +6,31 @@
   },
   "newProjectRoot": "projects",
   "projects": {
+    "ngx-auth-client": {
+      "projectType": "library",
+      "root": "projects/ngx-auth-client",
+      "sourceRoot": "projects/ngx-auth-client/src",
+      "prefix": "auth",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:ng-packagr",
+          "configurations": {
+            "production": {
+              "tsConfig": "projects/ngx-auth-client/tsconfig.lib.prod.json"
+            },
+            "development": {
+              "tsConfig": "projects/ngx-auth-client/tsconfig.lib.json"
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "test": {
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "tsConfig": "projects/ngx-auth-client/tsconfig.spec.json"
+          }
+        }
+      }
+    }
   }
 }

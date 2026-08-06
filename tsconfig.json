@@ -7,6 +7,9 @@
     "noPropertyAccessFromIndexSignature": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
+    "paths": {
+      "ngx-auth-client": ["./dist/ngx-auth-client"]
+    },
     "skipLibCheck": true,
     "isolatedModules": true,
     "experimentalDecorators": true,
@@ -19,5 +22,13 @@
     "strictInjectionParameters": true,
     "strictInputAccessModifiers": true
   },
-  "files": []
+  "files": [],
+  "references": [
+    {
+      "path": "./projects/ngx-auth-client/tsconfig.lib.json"
+    },
+    {
+      "path": "./projects/ngx-auth-client/tsconfig.spec.json"
+    }
+  ]
 }
