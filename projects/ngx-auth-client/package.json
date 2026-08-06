@@ -1,6 +1,30 @@
 {
   "name": "@ismailza/ngx-auth-client",
   "version": "0.0.1",
+  "description": "A reactive authentication layer for Angular applications. Exposes auth state as signals, protects routes with a functional guard, and keeps your feature code free of any identity-provider imports.",
+  "keywords": [
+    "angular",
+    "auth",
+    "guard",
+    "security",
+    "interceptor",
+    "jwt",
+    "oidc",
+    "oauth2",
+    "signals",
+    "state",
+    "typescript"
+  ],
+  "license": "MIT",
+  "author": "Ismail ZAHIR",
+  "homepage": "https://github.com/ismailza/ngx-auth-client#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ismailza/ngx-auth-client.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ismailza/ngx-auth-client/issues"
+  },
   "peerDependencies": {
     "@angular/common": "^22.1.0",
     "@angular/core": "^22.1.0"
