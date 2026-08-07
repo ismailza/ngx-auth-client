@@ -7,8 +7,19 @@
     "noPropertyAccessFromIndexSignature": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
+    /* Secondary entry points import the core by its published specifier, the
+       same way a consumer does. Mapping them to source keeps type-checking and
+       tests honest without a build step in between. */
     "paths": {
-      "ngx-auth-client": ["./dist/ngx-auth-client"]
+      "@ismailza/ngx-auth-client": [
+        "./projects/ngx-auth-client/src/public-api.ts"
+      ],
+      "@ismailza/ngx-auth-client/keycloak": [
+        "./projects/ngx-auth-client/keycloak/src/public-api.ts"
+      ],
+      "@ismailza/ngx-auth-client/testing": [
+        "./projects/ngx-auth-client/testing/src/public-api.ts"
+      ]
     },
     "skipLibCheck": true,
     "isolatedModules": true,

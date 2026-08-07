@@ -4,10 +4,11 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "outDir": "../../out-tsc/lib",
+    "rootDir": ".",
     "declaration": true,
     "declarationMap": true,
     "types": []
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "keycloak/**/*.ts", "testing/**/*.ts"],
   "exclude": ["**/*.spec.ts"]
 }
