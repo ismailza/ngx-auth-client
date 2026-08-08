@@ -1,0 +1,179 @@
+---
+id: testing
+title: Testing entry point
+description: API reference for @ismailza/ngx-auth-client/testing — withFakeAuth(), FakeAuthProvider, its options and its recorded calls.
+---
+
+# Testing entry point
+
+```ts
+import {
+  withFakeAuth,
+  FakeAuthProvider,
+  type FakeAuthOptions,
+  type RecordedCall,
+} from '@ismailza/ngx-auth-client/testing';
+```
+
+No `keycloak-js` needed — this entry point has no identity-provider dependency.
+
+## `withFakeAuth()`
+
+```ts
+function withFakeAuth(options?: FakeAuthOptions): AuthFeature;
+```
+
+Configures the in-memory `FakeAuthProvider` as the identity provider. Pass the result
+to `provideAuth()` exactly as you would `withKeycloak()` — that symmetry is the point.
+Nothing under test knows which adapter it got. `kind` is `'fake'`.
+
+```ts
+TestBed.configureTestingModule({
+  providers: [
+    provideAuth(
+      withFakeAuth({
+        authenticated: true,
+        roles: ['admin'],
+        claims: { sub: 'user-1', name: 'Test User' },
+      }),
+    ),
+    provideRouter(routes),
+  ],
+});
+```
+
+The same instance backs both `FakeAuthProvider` and `AUTH_PROVIDER`, so a test can
+inject `FakeAuthProvider` to drive state while the code under test sees only the port.
+
+## `FakeAuthOptions`
+
+```ts
+interface FakeAuthOptions {
+  authenticated?: boolean;
+  claims?: Claims | null;
+  roles?: readonly string[];
+  profile?: UserProfile | null;
+  token?: string;
+  failInit?: Error;
+  failToken?: Error;
+}
+```
+
+| Option          | Type                  | Default        | Effect                             |
+| --------------- | --------------------- | -------------- | ---------------------------------- |
+| `authenticated` | `boolean`             | `false`        | Initial session state              |
+| `claims`        | `Claims \| null`      | `null`         | Claims exposed while authenticated |
+| `roles`         | `readonly string[]`   | `[]`           | Roles exposed while authenticated  |
+| `profile`       | `UserProfile \| null` | `null`         | What `loadProfile()` resolves to   |
+| `token`         | `string`              | `'fake-token'` | What `getToken()` resolves to      |
+| `failInit`      | `Error`               | —              | Makes `init()` reject              |
+| `failToken`     | `Error`               | —              | Makes `getToken()` reject          |
+
+:::note[`profile` isn't published until loaded]
+Setting `profile` decides what `loadProfile()` resolves to; the `profile` signal stays
+`null` until something calls it. The real adapters load it lazily, and a fake that
+pre-populated it would hide a missing `loadProfile()` call in the code under test.
+:::
+
+`failInit` exercises the "provider unreachable" path — `whenReady()` still resolves,
+`ready()` becomes `true`, and `initError()` is set. `failToken` exercises
+expired-session handling.
+
+## `FakeAuthProvider`
+
+A real implementation of `AuthProvider` plus all four capability interfaces — not a
+stub. Guards, interceptors and components exercise the same code paths they do in
+production.
+
+It doubles as a check on the abstraction: a port that's honest is easy to implement
+twice; one that leaks provider assumptions is not.
+
+### State signals
+
+| Signal          | Type                          |
+| --------------- | ----------------------------- |
+| `authenticated` | `Signal<boolean>`             |
+| `claims`        | `Signal<Claims \| null>`      |
+| `roles`         | `Signal<readonly string[]>`   |
+| `profile`       | `Signal<UserProfile \| null>` |
+| `initialized`   | `Signal<boolean>`             |
+
+`initialized` reports whether `init()` has been called — useful for asserting that
+`provideAuth()` started the adapter at all.
+
+### Driving state
+
+```ts
+setAuthenticated(authenticated: boolean): void;
+setRoles(roles: readonly string[]): void;
+setClaims(claims: Claims | null): void;
+```
+
+```ts
+const fake = TestBed.inject(FakeAuthProvider);
+
+fake.setRoles(['viewer']);
+fake.setClaims({ sub: 'user-2' });
+fake.setAuthenticated(false);
+```
+
+`setAuthenticated(false)` also clears claims, roles and profile, so a test can't
+assert against a signed-out user who still holds roles — a state the real adapter never
+reaches.
+
+### Recorded calls
+
+| Property                 | Type                                    |
+| ------------------------ | --------------------------------------- |
+| `loginCalls`             | `RecordedCall<LoginOptions>[]`          |
+| `logoutCalls`            | `RecordedCall<LogoutOptions>[]`         |
+| `registerCalls`          | `RecordedCall<RegisterOptions>[]`       |
+| `updatePasswordCalls`    | `RecordedCall<UpdatePasswordOptions>[]` |
+| `accountManagementCalls` | `number`                                |
+
+```ts
+interface RecordedCall<T> {
+  readonly options: T | undefined;
+}
+```
+
+Each array holds the calls in order, with the options they were given:
+
+```ts
+expect(fake.loginCalls.length).toBe(1);
+expect(fake.loginCalls[0].options?.redirectUri).toBe('https://app.example.com/orders');
+```
+
+`login()` records and resolves without navigating anywhere — which is what makes guard
+tests possible without a real redirect. `logout()` records and then sets
+`authenticated` to `false`.
+
+### `configure()`
+
+```ts
+configure(options: FakeAuthOptions): void;
+```
+
+Applies the options `withFakeAuth()` was configured with. Called by the feature's
+factory; you don't normally call it yourself. Reach for it only to reset a provider
+mid-test, which is usually a sign the test should be two tests.
+
+## Remember to await readiness
+
+`init()` settles a microtask after the injector is created:
+
+```ts
+const fixture = TestBed.createComponent(Header);
+
+await TestBed.inject(AuthService).whenReady(); // ← don't skip
+
+fixture.detectChanges();
+```
+
+Skipping this is the most common cause of an auth test asserting against the loading
+state.
+
+## Next
+
+- [Testing guide](../guides/testing.mdx) — guards, interceptors, failure paths, harness pattern
+- [Ports](./ports.mdx) — the interface this fake implements

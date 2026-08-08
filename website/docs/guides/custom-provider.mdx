@@ -1,0 +1,296 @@
+---
+id: custom-provider
+title: Writing a custom provider
+description: Implement the AuthProvider port to adapt any identity provider — Auth0, Entra ID, generic OIDC — without changing application code.
+---
+
+# Writing a custom provider
+
+The core depends on one small interface. Implement it, wrap it in a feature
+function, and every guard, interceptor and component keeps working unchanged.
+
+```ts
+export interface AuthProvider {
+  readonly authenticated: Signal<boolean>;
+  readonly claims: Signal<Claims | null>;
+  readonly roles: Signal<readonly string[]>;
+
+  init(): Promise<void>;
+  getToken(): Promise<string>;
+  login(options?: LoginOptions): Promise<void>;
+  logout(options?: LogoutOptions): Promise<void>;
+}
+```
+
+Three signals, four methods. That's the whole contract the library is allowed to
+depend on.
+
+## The contract
+
+| Member          | Requirement                                                                          |
+| --------------- | ------------------------------------------------------------------------------------ |
+| `authenticated` | `true` only when a _valid_ session exists. Derive it, don't track it separately      |
+| `claims`        | Decoded access-token payload; `null` when unauthenticated                            |
+| `roles`         | Already normalised to strings. **Never `null`** — an empty array when there are none |
+| `init()`        | Called once by `provideAuth()`. Must be safe on a non-browser platform               |
+| `getToken()`    | A token valid _now_ — refresh first if near expiry. Throws when it can't             |
+| `login()`       | Send the user to the provider's login page                                           |
+| `logout()`      | Terminate the session                                                                |
+
+Two rules are worth stating outright.
+
+**State is signals, operations are promises.** The line is state versus action. A
+refresh is an action, so `getToken()` is a promise; whether someone is signed in is
+state, so it's a signal.
+
+**Role normalisation is your job.** Providers disagree wildly about where roles
+live — Keycloak splits them across `realm_access` and `resource_access`, Auth0 uses a
+namespaced custom claim, Cognito uses `cognito:groups`, Entra ID uses `roles` or raw
+group GUIDs. Resolve that here, so the core only ever sees `string[]`.
+
+## A minimal adapter
+
+```ts title="src/app/auth/oidc-auth.provider.ts"
+import { isPlatformBrowser } from '@angular/common';
+import { computed, inject, Injectable, PLATFORM_ID, signal } from '@angular/core';
+import type { AuthProvider, Claims, LoginOptions, LogoutOptions } from '@ismailza/ngx-auth-client';
+
+@Injectable()
+export class OidcAuthProvider implements AuthProvider {
+  private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
+  private readonly client = inject(MY_OIDC_CLIENT); // your SDK, or null on the server
+
+  private readonly _claims = signal<Claims | null>(null);
+
+  readonly claims = this._claims.asReadonly();
+
+  // Derived, not tracked separately — the two can never disagree.
+  readonly authenticated = computed(() => this._claims() !== null);
+
+  readonly roles = computed(() => {
+    const claims = this._claims();
+    if (claims === null) {
+      return [];
+    }
+    const raw = claims['https://my-app.example.com/roles'];
+    return Array.isArray(raw) ? raw.filter((r): r is string => typeof r === 'string') : [];
+  });
+
+  async init(): Promise<void> {
+    // No session exists on the server — report "unauthenticated", don't throw.
+    if (!this.isBrowser || this.client === null) {
+      return;
+    }
+
+    this.client.onSessionChanged(() => this.sync());
+    await this.client.restoreSession();
+    this.sync();
+  }
+
+  async getToken(): Promise<string> {
+    const token = await this.requireClient().getAccessToken(); // refreshes if needed
+    this.sync();
+
+    if (token === null) {
+      throw new Error('No access token available — the user is not authenticated.');
+    }
+    return token;
+  }
+
+  async login(options?: LoginOptions): Promise<void> {
+    await this.requireClient().authorize({
+      redirectUri: options?.redirectUri,
+      scope: options?.scope,
+      uiLocales: options?.locale,
+      prompt: options?.prompt,
+      loginHint: options?.loginHint,
+    });
+  }
+
+  async logout(options?: LogoutOptions): Promise<void> {
+    await this.requireClient().endSession({ returnTo: options?.redirectUri });
+  }
+
+  private sync(): void {
+    this._claims.set(this.client?.decodedToken ?? null);
+  }
+
+  private requireClient() {
+    if (this.client === null) {
+      throw new Error(
+        'The OIDC client is unavailable on this platform. Guard authentication calls with `isPlatformBrowser()` when running with SSR.',
+      );
+    }
+    return this.client;
+  }
+}
+```
+
+Four details in there are the ones that matter in practice.
+
+**`authenticated` is `computed()` from `claims`.** Deriving it means the two can
+never disagree — no code path can leave `authenticated` true with `claims` null.
+
+**Callbacks become signals in exactly one place.** Every SDK reports state through
+events or callbacks. Translating them in `sync()` is what makes the whole
+application reactive without anything downstream subscribing.
+
+**`init()` returns early on the server** rather than throwing, so prerendering
+works.
+
+**Role extraction tolerates any shape.** A token from a misconfigured mapper should
+yield no roles, not an exception inside a route guard.
+
+## Packaging it as a feature
+
+`provideAuth()` takes an `AuthFeature` — a `kind` for diagnostics and the providers
+your adapter needs, including `AUTH_PROVIDER` itself:
+
+```ts title="src/app/auth/with-oidc.ts"
+import { isPlatformBrowser } from '@angular/common';
+import { PLATFORM_ID } from '@angular/core';
+import { AUTH_PROVIDER, type AuthFeature } from '@ismailza/ngx-auth-client';
+import { OidcAuthProvider } from './oidc-auth.provider';
+import { MY_OIDC_CLIENT, OIDC_CONFIG, type OidcConfiguration } from './tokens';
+
+export const withOidc = (config: OidcConfiguration): AuthFeature => ({
+  kind: 'oidc',
+  providers: [
+    { provide: OIDC_CONFIG, useValue: resolveConfiguration(config) },
+    {
+      provide: MY_OIDC_CLIENT,
+      // Constructing the SDK touches browser globals, so only do it where they exist.
+      useFactory: (platformId: object) =>
+        isPlatformBrowser(platformId) ? new MyOidcClient(config) : null,
+      deps: [PLATFORM_ID],
+    },
+    { provide: AUTH_PROVIDER, useClass: OidcAuthProvider },
+  ],
+});
+```
+
+Then it's used exactly like the built-in adapters:
+
+```ts
+provideAuth(withOidc({ issuer: 'https://id.example.com', clientId: 'my-app' }));
+```
+
+:::tip[Resolve defaults in the feature function, not the adapter]
+Merging configuration over defaults in `withOidc()` and providing the resolved
+object means the adapter reads a fully-populated value with no `??` fallbacks
+scattered through it. Strip `undefined` before merging, so an explicitly-undefined
+optional field doesn't erase a default.
+:::
+
+## Adding capabilities
+
+Implement the optional interfaces your provider actually supports. The core
+feature-detects them, and `AuthService` exposes a matching `can*` signal:
+
+```ts
+import type {
+  AuthProvider,
+  SupportsProfile,
+  SupportsRegistration,
+  UserProfile,
+} from '@ismailza/ngx-auth-client';
+
+@Injectable()
+export class OidcAuthProvider implements AuthProvider, SupportsRegistration, SupportsProfile {
+  private readonly _profile = signal<UserProfile | null>(null);
+  readonly profile = this._profile.asReadonly();
+
+  async register(options?: RegisterOptions): Promise<void> {
+    await this.requireClient().authorize({ ...options, screenHint: 'signup' });
+  }
+
+  async loadProfile(): Promise<UserProfile> {
+    const raw = await this.requireClient().fetchUserInfo();
+    const profile: UserProfile = {
+      id: raw.sub,
+      username: raw.preferred_username,
+      email: raw.email,
+      emailVerified: raw.email_verified,
+      firstName: raw.given_name,
+      lastName: raw.family_name,
+    };
+    this._profile.set(profile);
+    return profile;
+  }
+}
+```
+
+| Interface                   | Methods                    | Detected by                 |
+| --------------------------- | -------------------------- | --------------------------- |
+| `SupportsRegistration`      | `register(options?)`       | `register` present          |
+| `SupportsAccountManagement` | `accountManagement()`      | `accountManagement` present |
+| `SupportsPasswordUpdate`    | `updatePassword(options?)` | `updatePassword` present    |
+| `SupportsProfile`           | `profile`, `loadProfile()` | `loadProfile` present       |
+
+Detection is by method presence, so **omit what you can't support** — don't
+implement it as a throwing stub. A stub makes `canRegister()` report `true` and
+puts a button in your UI that fails when clicked, which is the exact failure mode
+capabilities exist to prevent.
+
+`SupportsProfile` needs both members: `loadProfile()` is what's detected, and
+`profile` is what `AuthService` re-exposes.
+
+## Handling `LoginOptions`
+
+Every field is optional and **advisory**. Forward what your provider understands
+and ignore the rest — don't throw on an option you can't honour:
+
+| Field         | Typical mapping                  |
+| ------------- | -------------------------------- |
+| `redirectUri` | `redirect_uri`                   |
+| `scope`       | `scope`, space-separated         |
+| `locale`      | `ui_locales`                     |
+| `prompt`      | `prompt` — pass through verbatim |
+| `loginHint`   | `login_hint`                     |
+
+Throwing would mean a component that passes `locale` works on one adapter and
+crashes on another, defeating the point of the port.
+
+## Testing your adapter
+
+Test it against the same expectations the library holds:
+
+```ts
+it('reports unauthenticated on the server', async () => {
+  TestBed.configureTestingModule({
+    providers: [provideAuth(withOidc(config)), { provide: PLATFORM_ID, useValue: 'server' }],
+  });
+
+  const auth = TestBed.inject(AuthService);
+  await auth.whenReady();
+
+  expect(auth.authenticated()).toBe(false);
+  expect(auth.initError()).toBeNull();
+});
+
+it('normalises roles to strings', () => {
+  // …feed a malformed claim, expect [] rather than a throw
+});
+
+it('reports only the capabilities it implements', () => {
+  const auth = TestBed.inject(AuthService);
+  expect(auth.canRegister()).toBe(true);
+  expect(auth.canUpdatePassword()).toBe(false); // not implemented — no stub
+});
+```
+
+Then run your existing component and guard tests against `withOidc()` as well as
+`withFakeAuth()`. If they pass unchanged, the adapter is substitutable — which is
+the only property that matters.
+
+## Contributing an adapter
+
+Adapters for widely-used providers are welcome in the package itself. The bar is
+validation against a real deployment rather than against the SDK's documentation —
+see [CONTRIBUTING.md](https://github.com/ismailza/ngx-auth-client/blob/main/CONTRIBUTING.md).
+
+## Next
+
+- [Ports reference](../api/ports.mdx) — `AuthProvider` and every capability interface
+- [Testing](./testing.mdx) — the fake adapter, which is itself a reference implementation
+- [Keycloak adapter](./keycloak.mdx) — a complete adapter to read as an example

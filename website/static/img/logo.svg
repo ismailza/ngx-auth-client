@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="ngx-auth-client">
+  <defs>
+    <linearGradient id="ngx-auth-client-logo" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e40035" />
+      <stop offset="1" stop-color="#7b2ff7" />
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#ngx-auth-client-logo)" />
+  <!-- Shield with the keyhole knocked out of it, so the gradient shows through. -->
+  <path
+    fill="#fff"
+    fill-rule="evenodd"
+    d="M8.3 8.6 L16 6 L23.7 8.6 V15.8 C23.7 20.4 20.6 24 16 25.8 C11.4 24 8.3 20.4 8.3 15.8 Z
+       M14.95 15.76 A2.4 2.4 0 1 1 17.05 15.76 L17.6 20.2 H14.4 Z"
+  />
+</svg>

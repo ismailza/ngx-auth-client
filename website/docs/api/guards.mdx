@@ -1,0 +1,214 @@
+---
+id: guards
+title: authGuard
+description: API reference for authGuard, the AuthRouteData contract, and the collectRoleRequirements / isSatisfiedBy helpers.
+---
+
+# `authGuard`
+
+A functional `CanActivateFn` that protects a route behind authentication and,
+optionally, role requirements declared in `data.auth`.
+
+```ts
+const authGuard: CanActivateFn;
+```
+
+```ts
+{
+  path: 'admin',
+  canActivate: [authGuard],
+  data: { auth: { anyOf: ['admin', 'owner'] } } satisfies AuthRouteData,
+  loadComponent: () => import('./admin').then((m) => m.Admin),
+}
+```
+
+## Return values
+
+| Situation                                        | Returns   | Effect                                                |
+| ------------------------------------------------ | --------- | ----------------------------------------------------- |
+| Non-browser platform                             | `false`   | Refuses, no redirect                                  |
+| Unauthenticated                                  | `false`   | After calling `login()` with this route as the target |
+| Authenticated, requirements satisfied            | `true`    | Activates                                             |
+| Requirements unsatisfied, `forbiddenRoute` set   | `UrlTree` | Redirects there                                       |
+| Requirements unsatisfied, `forbiddenRoute: null` | `false`   | Refuses, stays put                                    |
+
+The guard is `async`, so it returns `Promise<boolean | UrlTree>`. Angular awaits it
+before loading a lazy route's bundle.
+
+## Behaviour
+
+**It awaits `AuthService.whenReady()`** before deciding, so it never evaluates a
+half-restored session. Without this, every hard refresh would bounce a signed-in user
+to the login page.
+
+**Unauthenticated users are returned to where they were going:**
+
+```ts
+await auth.login({ redirectUri: `${globalThis.location.origin}${state.url}` });
+```
+
+**Missing roles are handled differently from missing authentication.** Signing in
+again wouldn't grant a role, so those users go to
+[`forbiddenRoute`](../guides/configuration.mdx#forbiddenroute) instead of the login
+page.
+
+**On a non-browser platform it fails closed** — refusing without a redirect. Tokens
+are memory-only so the server has no session to evaluate, and rendering protected
+content into a possibly-cached SSR response would leak it.
+
+## Use with `canActivateChild`
+
+`CanActivateFn` and `CanActivateChildFn` share a signature, so the same guard works
+in either slot:
+
+```ts
+{
+  path: 'admin',
+  canActivateChild: [authGuard],
+  data: { auth: { anyOf: ['admin'] } } satisfies AuthRouteData,
+  children: [ /* … */ ],
+}
+```
+
+## `AuthRouteData`
+
+The route `data` contract the guard reads.
+
+```ts
+interface AuthRouteData {
+  auth?: RoleRequirement;
+}
+
+interface RoleRequirement {
+  anyOf?: readonly string[];
+  allOf?: readonly string[];
+}
+```
+
+| Field   | Meaning                             |
+| ------- | ----------------------------------- |
+| `anyOf` | The user must hold **at least one** |
+| `allOf` | The user must hold **every one**    |
+
+Both may be combined; both must then be satisfied. Omit `auth` to require
+authentication only.
+
+:::tip[Always write `satisfies AuthRouteData`]
+`Route['data']` is `Record<string, any>`, so `{ auth: { anyof: [...] } }` compiles and
+silently protects nothing. `satisfies` catches it without widening the property type.
+:::
+
+### Requirements accumulate
+
+The guard walks `route.pathFromRoot`, so a requirement on a parent route applies to
+every child:
+
+```ts
+{
+  path: 'admin',
+  canActivate: [authGuard],
+  data: { auth: { anyOf: ['admin', 'owner'] } } satisfies AuthRouteData,
+  children: [
+    // inherits anyOf ['admin','owner'], adds allOf ['finance']
+    {
+      path: 'billing',
+      data: { auth: { allOf: ['finance'] } } satisfies AuthRouteData,
+      loadComponent: () => import('./billing').then((m) => m.Billing),
+    },
+  ],
+}
+```
+
+Reading only the leaf's `data` would silently drop a requirement declared on a
+section's parent — which is exactly where people declare it once. See [Protecting
+routes](../guides/route-protection.mdx#requirements-accumulate-down-the-tree).
+
+## Requirement helpers
+
+Both are exported for custom guards and for testing. `authGuard` uses them
+internally.
+
+### `collectRoleRequirements()`
+
+```ts
+function collectRoleRequirements(route: ActivatedRouteSnapshot): AccumulatedRoleRequirements;
+```
+
+Walks from the root to `route`, collecting every `data.auth`.
+
+```ts
+interface AccumulatedRoleRequirements {
+  readonly anyOf: readonly (readonly string[])[];
+  readonly allOf: readonly string[];
+}
+```
+
+Each `anyOf` group is kept **separate** rather than flattened, because two ancestors
+each demanding "one of these" are two independent conditions — merging them would let
+one role satisfy both. `allOf` sets are unioned and de-duplicated.
+
+### `isSatisfiedBy()`
+
+```ts
+function isSatisfiedBy(
+  requirements: AccumulatedRoleRequirements,
+  granted: readonly string[],
+): boolean;
+```
+
+Whether `granted` satisfies every accumulated requirement: every role in `allOf`, and
+at least one role from each `anyOf` group.
+
+### Writing a custom guard
+
+Compose the same pieces when you need extra conditions:
+
+```ts
+export const activeSubscriptionGuard: CanActivateFn = async (route, state) => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+
+  await auth.whenReady();
+
+  if (!auth.authenticated()) {
+    await auth.login({ redirectUri: `${globalThis.location.origin}${state.url}` });
+    return false;
+  }
+
+  if (!isSatisfiedBy(collectRoleRequirements(route), auth.roles())) {
+    return router.parseUrl('/forbidden');
+  }
+
+  // The extra condition this guard exists for.
+  if (auth.claims()?.['subscription_status'] !== 'active') {
+    return router.parseUrl('/billing/renew');
+  }
+
+  return true;
+};
+```
+
+:::warning[Inject before the first `await`]
+Every `inject()` call must happen while the injection context is still active — that
+is, before the first `await`. Injecting afterwards throws `NG0203`.
+:::
+
+## Testing
+
+```ts
+TestBed.configureTestingModule({
+  providers: [
+    provideAuth(withFakeAuth({ authenticated: true, roles: ['admin'] })),
+    provideRouter(routes),
+  ],
+});
+
+expect(await TestBed.inject(Router).navigate(['/admin'])).toBe(true);
+```
+
+See [Testing](../guides/testing.mdx#guards).
+
+## Next
+
+- [Protecting routes](../guides/route-protection.mdx) — the guard in context
+- [`AuthService`](./auth-service.mdx#role-predicates) — the same checks in components

@@ -1,0 +1,69 @@
+/**
+ * Any CSS included here will be global. The classic template
+ * bundles Infima by default. Infima is a CSS framework designed to
+ * work well for content-centric websites.
+ */
+
+:root {
+  /* The violet the logo's gradient resolves to. 5.85:1 on white — WCAG AA for
+     body-size links, and for white text on a primary button. */
+  --ifm-color-primary: #7b2ff7;
+  --ifm-color-primary-dark: #6913f6;
+  --ifm-color-primary-darker: #6109f1;
+  --ifm-color-primary-darkest: #5008c6;
+  --ifm-color-primary-light: #8d4bf8;
+  --ifm-color-primary-lighter: #9659f9;
+  --ifm-color-primary-lightest: #b184fa;
+
+  --ifm-code-font-size: 92%;
+  --ifm-heading-font-weight: 650;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+
+  --nac-surface: #ffffff;
+  --nac-surface-muted: #f7f7f9;
+  --nac-border: rgba(0, 0, 0, 0.1);
+  --nac-hero-glow: rgba(123, 47, 247, 0.14);
+}
+
+/* For readability concerns, a lighter palette is used in dark mode.
+   The base tint is 6.32:1 on the dark background — WCAG AA. */
+[data-theme='dark'] {
+  --ifm-color-primary: #a78bfa;
+  --ifm-color-primary-dark: #8b66f8;
+  --ifm-color-primary-darker: #7d53f8;
+  --ifm-color-primary-darkest: #521bf5;
+  --ifm-color-primary-light: #c3b0fc;
+  --ifm-color-primary-lighter: #d1c3fc;
+  --ifm-color-primary-lightest: #ddd6fe;
+
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.1);
+
+  --nac-surface: #1f1f22;
+  --nac-surface-muted: #232326;
+  --nac-border: rgba(255, 255, 255, 0.12);
+  --nac-hero-glow: rgba(167, 139, 250, 0.16);
+}
+
+/* Long API tables should scroll rather than push the page sideways. */
+.markdown table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.markdown table code {
+  white-space: nowrap;
+}
+
+/* Keep focus rings visible on every interactive element, including the ones
+   Infima styles as buttons. */
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+}
+
+.navbar__logo {
+  display: flex;
+  align-items: center;
+}

@@ -1,0 +1,161 @@
+---
+id: provide-auth
+title: provideAuth()
+description: API reference for provideAuth() and the AuthFeature interface — how an adapter and provider-agnostic configuration are registered.
+---
+
+# `provideAuth()`
+
+Configures authentication for an Angular application. Call it once.
+
+```ts
+function provideAuth(feature: AuthFeature, config?: AuthConfiguration): EnvironmentProviders;
+```
+
+| Parameter | Type                | Required | Purpose                                             |
+| --------- | ------------------- | -------- | --------------------------------------------------- |
+| `feature` | `AuthFeature`       | yes      | The identity-provider adapter                       |
+| `config`  | `AuthConfiguration` | no       | Provider-agnostic options; every field is defaulted |
+
+```ts title="src/app/app.config.ts"
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideAuth(
+      withKeycloak({
+        url: 'https://auth.example.com',
+        realm: 'my-realm',
+        clientId: 'my-app',
+      }),
+      { forbiddenRoute: '/no-access' },
+    ),
+    provideHttpClient(withInterceptors([authTokenInterceptor])),
+    provideRouter(routes),
+  ],
+};
+```
+
+## What it registers
+
+1. **The adapter's providers**, including `AUTH_PROVIDER` itself.
+2. **`AUTH_CONFIG`** — your `config` resolved against the defaults.
+3. **An environment initializer** that injects `AuthService`, which is what starts
+   the adapter's `init()`.
+
+`AuthService` is `providedIn: 'root'` and needs no registration.
+
+## Initialisation is started, not awaited
+
+Constructing `AuthService` kicks off `init()`, so the environment initializer starts
+restoring the session during bootstrap rather than on first injection. It does not
+block bootstrap.
+
+The two pieces that need settled state wait for it themselves:
+
+- `authGuard` awaits `AuthService.whenReady()` before deciding.
+- `authTokenInterceptor` awaits it before signing a request.
+
+So protected routes are safe while unprotected shell UI renders immediately. To hold
+your own rendering, read [`ready()`](./auth-service.mdx#initialisation-state).
+
+:::note[Called more than once]
+`provideAuth()` isn't designed to be called twice. A second call provides
+`AUTH_PROVIDER` and `AUTH_CONFIG` again, and Angular's last-one-wins resolution makes
+the outcome depend on provider order. Configure authentication in one place.
+:::
+
+## `AuthConfiguration`
+
+```ts
+interface AuthConfiguration {
+  forbiddenRoute?: string | null;
+  bearer?: BearerTokenConfiguration | false;
+}
+```
+
+| Field            | Type                                | Default               | Notes                                        |
+| ---------------- | ----------------------------------- | --------------------- | -------------------------------------------- |
+| `forbiddenRoute` | `string \| null`                    | `'/forbidden'`        | `null` refuses activation without navigating |
+| `bearer`         | `BearerTokenConfiguration \| false` | `/api/*`, all methods | `false` attaches no token anywhere           |
+
+```ts
+interface BearerTokenConfiguration {
+  urlPattern?: RegExp;
+  methods?: readonly HttpMethod[];
+}
+```
+
+See [Configuration](../guides/configuration.mdx) for the full discussion, and
+[Models](./models.mdx#authconfiguration) for the resolved shape.
+
+## `AuthFeature`
+
+An adapter, packaged for `provideAuth()`.
+
+```ts
+interface AuthFeature {
+  readonly kind: string;
+  readonly providers: readonly Provider[];
+}
+```
+
+| Field       | Purpose                                                 |
+| ----------- | ------------------------------------------------------- |
+| `kind`      | Identifies the adapter in errors and devtools           |
+| `providers` | Everything the adapter needs, including `AUTH_PROVIDER` |
+
+You don't assemble one by hand. It's produced by:
+
+| Function                  | Entry point                                          |
+| ------------------------- | ---------------------------------------------------- |
+| `withKeycloak(config)`    | `@ismailza/ngx-auth-client/keycloak`                 |
+| `withFakeAuth(options?)`  | `@ismailza/ngx-auth-client/testing`                  |
+| your own feature function | see [Custom provider](../guides/custom-provider.mdx) |
+
+## Standalone bootstrap
+
+Without a separate `ApplicationConfig`:
+
+```ts title="src/main.ts"
+bootstrapApplication(App, {
+  providers: [
+    provideAuth(withKeycloak({ url, realm, clientId })),
+    provideHttpClient(withInterceptors([authTokenInterceptor])),
+    provideRouter(routes),
+  ],
+});
+```
+
+## NgModule applications
+
+`provideAuth()` returns `EnvironmentProviders`, which is valid in an NgModule's
+`providers` array:
+
+```ts
+@NgModule({
+  providers: [
+    provideAuth(withKeycloak({ url, realm, clientId })),
+    provideHttpClient(withInterceptors([authTokenInterceptor])),
+  ],
+})
+export class AppModule {}
+```
+
+Put it in the **root** module only. `authGuard` and `authTokenInterceptor` are
+functional, so they work in an NgModule application without any wrapper class.
+
+## Testing
+
+Swap the feature; keep everything else:
+
+```ts
+TestBed.configureTestingModule({
+  providers: [provideAuth(withFakeAuth({ authenticated: true, roles: ['admin'] }))],
+});
+```
+
+See [Testing](../guides/testing.mdx).
+
+## Next
+
+- [`AuthService`](./auth-service.mdx) — what your components inject
+- [Injection tokens](./tokens.mdx) — `AUTH_PROVIDER` and `AUTH_CONFIG`

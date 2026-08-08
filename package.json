@@ -11,7 +11,11 @@
     "test": "ng test",
     "compat": "node scripts/check-angular-compat.mjs",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "docs:install": "npm --prefix website ci",
+    "docs:start": "npm --prefix website start",
+    "docs:build": "npm --prefix website run build",
+    "docs:serve": "npm --prefix website run serve"
   },
   "private": true,
   "packageManager": "npm@11.16.0",

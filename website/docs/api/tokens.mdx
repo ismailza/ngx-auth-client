@@ -1,0 +1,144 @@
+---
+id: tokens
+title: Injection tokens
+description: The DI tokens ngx-auth-client uses — AUTH_PROVIDER, AUTH_CONFIG and the Keycloak tokens — for custom interceptors, guards and tests.
+---
+
+# Injection tokens
+
+Most applications never touch these — `provideAuth()` sets them all, and
+`AuthService` is the surface you're meant to use. They're exported for custom
+guards and interceptors, for tests, and for the occasional case where one value
+must come from somewhere else.
+
+## Core tokens
+
+| Token           | Type                        | Set by                                    |
+| --------------- | --------------------------- | ----------------------------------------- |
+| `AUTH_PROVIDER` | `AuthProvider`              | The adapter feature (`withKeycloak()`, …) |
+| `AUTH_CONFIG`   | `ResolvedAuthConfiguration` | `provideAuth()`                           |
+
+### `AUTH_PROVIDER`
+
+```ts
+const AUTH_PROVIDER: InjectionToken<AuthProvider>;
+```
+
+The configured adapter. Provided by an auth feature — never directly by you.
+
+**Inject `AuthService` instead.** It's the stable surface, and it adds readiness
+state, capability detection and role predicates that the raw port deliberately
+omits.
+
+Injecting the port directly is appropriate in exactly two situations: library
+code that must sit at the port, and code that needs a capability type guard:
+
+```ts
+import { AUTH_PROVIDER, supportsProfile } from '@ismailza/ngx-auth-client';
+
+const provider = inject(AUTH_PROVIDER);
+
+if (supportsProfile(provider)) {
+  await provider.loadProfile();
+}
+```
+
+Note that injecting `AUTH_PROVIDER` **does not** start initialisation —
+constructing `AuthService` is what does. In practice `provideAuth()`'s environment
+initializer has already done it.
+
+### `AUTH_CONFIG`
+
+```ts
+const AUTH_CONFIG: InjectionToken<ResolvedAuthConfiguration>;
+```
+
+Provider-agnostic configuration, resolved against its defaults.
+
+```ts
+interface ResolvedAuthConfiguration {
+  readonly forbiddenRoute: string | null;
+  readonly bearer: Required<BearerTokenConfiguration> | null;
+}
+```
+
+`authGuard` reads `forbiddenRoute` from it; `authTokenInterceptor` reads `bearer`.
+Read it yourself when a custom guard should honour the same forbidden route:
+
+```ts
+export const customGuard: CanActivateFn = async () => {
+  const config = inject(AUTH_CONFIG);
+  const router = inject(Router);
+
+  // …
+  return config.forbiddenRoute === null ? false : router.parseUrl(config.forbiddenRoute);
+};
+```
+
+This token declares a **root-level factory** returning
+`AUTH_CONFIGURATION_DEFAULTS`, so it resolves even if `provideAuth()` was never
+called. That keeps a component test that only renders a template from failing on a
+missing provider.
+
+#### Overriding one value
+
+Providing the token after `provideAuth()` replaces the whole resolved object:
+
+```ts
+providers: [
+  provideAuth(withKeycloak({ url, realm, clientId })),
+  {
+    provide: AUTH_CONFIG,
+    useValue: {
+      forbiddenRoute: '/no-access',
+      bearer: { urlPattern: /^\/api\//, methods: ['GET', 'POST'] },
+    } satisfies ResolvedAuthConfiguration,
+  },
+];
+```
+
+Because this is the _resolved_ shape, nothing is merged and nothing is normalised —
+you must supply every field, and strip any `g`/`y` flags yourself. Passing
+configuration to `provideAuth()` is almost always what you want instead.
+
+## Keycloak tokens
+
+From `@ismailza/ngx-auth-client/keycloak`:
+
+| Token               | Type                            | Notes                            |
+| ------------------- | ------------------------------- | -------------------------------- |
+| `KEYCLOAK_CONFIG`   | `ResolvedKeycloakConfiguration` | Resolved by `withKeycloak()`     |
+| `KEYCLOAK_INSTANCE` | `Keycloak \| null`              | `null` on a non-browser platform |
+
+```ts
+import { KEYCLOAK_CONFIG, KEYCLOAK_INSTANCE } from '@ismailza/ngx-auth-client/keycloak';
+
+const realm = inject(KEYCLOAK_CONFIG).realm;
+const keycloak = inject(KEYCLOAK_INSTANCE); // handle null
+```
+
+`KEYCLOAK_INSTANCE` is the escape hatch for genuinely Keycloak-specific work.
+Injecting it couples that file to Keycloak — which is the point: the coupling stays
+visible and local. See [Keycloak entry point](./keycloak.mdx#keycloak_instance).
+
+Neither declares a root factory, so both throw if injected without
+`withKeycloak()` in the providers.
+
+## Testing token
+
+`FakeAuthProvider` is provided as a class, not behind a token, and backs
+`AUTH_PROVIDER` as the same instance:
+
+```ts
+const fake = TestBed.inject(FakeAuthProvider);
+const port = TestBed.inject(AUTH_PROVIDER);
+// fake === port
+```
+
+That's what lets a test drive state through `FakeAuthProvider` while the code under
+test sees only the port. See [Testing entry point](./testing.mdx).
+
+## Next
+
+- [`provideAuth()`](./provide-auth.mdx) — what sets these
+- [Models](./models.mdx#resolvedauthconfiguration) — the resolved configuration shape

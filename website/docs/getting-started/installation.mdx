@@ -1,0 +1,211 @@
+---
+id: installation
+title: Installation
+description: Install @ismailza/ngx-auth-client and register its providers, guard and interceptor in an Angular application.
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Installation
+
+## Requirements
+
+| Requirement   | Version                                                                    |
+| ------------- | -------------------------------------------------------------------------- |
+| Angular       | 17 – 22 (`>=17.0.0 <23.0.0`)                                               |
+| RxJS          | `^7.4.0`                                                                   |
+| Peer deps     | `@angular/core`, `@angular/common`, `@angular/router`, `rxjs`              |
+| Optional peer | `keycloak-js` (`>=25.0.0 <27.0.0`) — required only by the Keycloak adapter |
+
+Signals-based state requires Angular 17+. Zoneless is supported but not
+required.
+
+:::info[Every version in that range is tested]
+Compatibility is verified on each push, against the packed tarball rather than
+the source. For each Angular major, CI installs the package into a throwaway
+consumer application and runs three checks:
+
+- a **type-check** with `ngc` against that version's Angular types;
+- a production **`ng build`**, which is what exercises the Angular linker over
+  the partial declarations the package ships;
+- a **runtime test** of the injector and the `exports` map.
+
+All three entry points — the core, `/keycloak` and `/testing` — are covered. The
+upper bound is deliberate: a new Angular major is added only once it has been
+validated.
+:::
+
+## Install
+
+<Tabs groupId="package-manager">
+  <TabItem value="npm" label="npm" default>
+
+```bash
+npm install @ismailza/ngx-auth-client keycloak-js
+```
+
+  </TabItem>
+  <TabItem value="pnpm" label="pnpm">
+
+```bash
+pnpm add @ismailza/ngx-auth-client keycloak-js
+```
+
+  </TabItem>
+  <TabItem value="yarn" label="Yarn">
+
+```bash
+yarn add @ismailza/ngx-auth-client keycloak-js
+```
+
+  </TabItem>
+</Tabs>
+
+`keycloak-js` is an **optional** peer dependency. Install it if you use the
+Keycloak adapter; omit it if you only use the fake adapter in tests or ship your
+own.
+
+## Entry points
+
+The package publishes three:
+
+| Import path                          | Contains                                                             |
+| ------------------------------------ | -------------------------------------------------------------------- |
+| `@ismailza/ngx-auth-client`          | `provideAuth`, `AuthService`, `authGuard`, the interceptor, the port |
+| `@ismailza/ngx-auth-client/keycloak` | `withKeycloak`, Keycloak configuration and tokens                    |
+| `@ismailza/ngx-auth-client/testing`  | `withFakeAuth`, `FakeAuthProvider`                                   |
+
+Nothing in the core imports `keycloak-js`, so an application that ships its own
+adapter never pulls it into the bundle.
+
+## Register the providers
+
+`provideAuth()` takes an adapter and, optionally, provider-agnostic
+configuration. It is called once.
+
+```ts title="src/app/app.config.ts"
+import { ApplicationConfig } from '@angular/core';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import { provideRouter } from '@angular/router';
+import { provideAuth, authTokenInterceptor } from '@ismailza/ngx-auth-client';
+import { withKeycloak } from '@ismailza/ngx-auth-client/keycloak';
+import { routes } from './app.routes';
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideAuth(
+      withKeycloak({
+        url: 'https://auth.example.com',
+        realm: 'my-realm',
+        clientId: 'my-app',
+      }),
+    ),
+    provideHttpClient(withInterceptors([authTokenInterceptor])),
+    provideRouter(routes),
+  ],
+};
+```
+
+That is the complete setup for the common case. Everything else is defaulted:
+`check-sso` on load, PKCE `S256`, automatic token refresh, and the bearer token
+attached to same-origin `/api/*` requests.
+
+:::tip[The three Keycloak values come from your realm]
+`url` is the server root (no `/auth` suffix on Keycloak 17+), `realm` is the
+realm name, and `clientId` is a **public** client registered in that realm with
+your application's origin in its valid redirect URIs. See the
+[Keycloak guide](../guides/keycloak.mdx#realm-setup).
+:::
+
+## Bootstrap is not blocked
+
+`provideAuth()` starts the adapter's `init()` as soon as the injector is created,
+using an environment initializer. It does **not** await it.
+
+That's deliberate: awaiting it would delay first paint for every user, including
+the ones heading somewhere public. Instead, the pieces that need a settled
+session wait for it themselves:
+
+- `authGuard` awaits `AuthService.whenReady()` before deciding, so a protected
+  route is never evaluated against a half-restored session.
+- `authTokenInterceptor` awaits it too, so a request fired during startup doesn't
+  go out bare and come back `401`.
+
+Unprotected shell UI renders immediately. If you need to hold rendering until the
+session is known, read the [`ready`
+signal](../api/auth-service.mdx#initialisation-state) in your template.
+
+## Register the interceptor
+
+The interceptor is registered by you, not by `provideAuth()`, because its
+position relative to your other interceptors changes the behaviour.
+
+```ts
+provideHttpClient(withInterceptors([authTokenInterceptor]));
+```
+
+The rule to remember: **the first interceptor in the array is the outermost
+one**, and the last sits closest to the network.
+
+Put `authTokenInterceptor` **innermost** — after any retry interceptor — so each
+retried attempt is signed with a freshly refreshed token rather than replaying an
+expired one:
+
+```ts
+withInterceptors([
+  errorInterceptor, // 1. outermost
+  retryInterceptor, // 2. retries transient failures
+  authTokenInterceptor, // 3. innermost — re-signs every single attempt
+]);
+```
+
+:::tip[Pairs with ngx-api-client]
+If you also want a typed HTTP layer — URL versioning, RFC 9457 error
+normalisation, retry with backoff — [`@ismailza/ngx-api-client`](https://github.com/ismailza/ngx-api-client)
+is built to sit on top of this. Register `authTokenInterceptor` last in its
+chain.
+:::
+
+## Add a forbidden route
+
+The guard redirects an authenticated user who lacks a required role to
+`/forbidden` by default. Give that path a route, or change it:
+
+```ts
+provideAuth(withKeycloak({ ... }), { forbiddenRoute: '/no-access' });
+```
+
+Pass `null` to refuse activation without navigating anywhere. See
+[Configuration](../guides/configuration.mdx#forbiddenroute).
+
+## Verify the setup
+
+Inject `AuthService` anywhere and render its state:
+
+```ts
+@Component({
+  selector: 'app-auth-status',
+  template: `
+    @if (!auth.ready()) {
+      <span>Checking session…</span>
+    } @else if (auth.authenticated()) {
+      <span>{{ auth.claims()?.preferred_username }}</span>
+      <button (click)="auth.logout()">Sign out</button>
+    } @else {
+      <button (click)="auth.login()">Sign in</button>
+    }
+  `,
+})
+export class AuthStatus {
+  protected readonly auth = inject(AuthService);
+}
+```
+
+If the button flips to a username after signing in, the adapter is wired up
+correctly.
+
+## Next
+
+Head to the [Quick start](./quick-start.mdx) to protect a route and call an
+authenticated API.

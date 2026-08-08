@@ -1,0 +1,355 @@
+---
+id: testing
+title: Testing
+description: Test authenticated Angular components, guards and interceptors with withFakeAuth() — an in-memory adapter that needs no Keycloak server.
+---
+
+# Testing
+
+Testing authenticated code shouldn't need a Keycloak server, a mocked
+`window.location`, or a hand-written `AuthService` double. The package ships an
+in-memory adapter you swap in exactly where the real one goes:
+
+```ts
+import { provideAuth, AuthService } from '@ismailza/ngx-auth-client';
+import { withFakeAuth, FakeAuthProvider } from '@ismailza/ngx-auth-client/testing';
+
+TestBed.configureTestingModule({
+  providers: [
+    provideAuth(
+      withFakeAuth({
+        authenticated: true,
+        roles: ['admin'],
+        claims: { sub: 'user-1', name: 'Test User' },
+      }),
+    ),
+  ],
+});
+```
+
+`withFakeAuth()` returns the same `AuthFeature` shape as `withKeycloak()`, so
+nothing under test knows which adapter it got — and `provideAuth()` wires up
+`AUTH_CONFIG`, the guard and the interceptor identically.
+
+:::info[It's a real implementation, not a stub]
+`FakeAuthProvider` implements the `AuthProvider` port and all four capabilities.
+Guards, interceptors and components run the same code paths they do in production —
+you're testing your integration, not a mock's approximation of it.
+
+It doubles as a check on the abstraction: a port that's honest is easy to implement
+twice.
+:::
+
+## Setup options
+
+Everything is optional; the defaults describe an anonymous user.
+
+| Option          | Type                  | Default        |
+| --------------- | --------------------- | -------------- |
+| `authenticated` | `boolean`             | `false`        |
+| `claims`        | `Claims \| null`      | `null`         |
+| `roles`         | `readonly string[]`   | `[]`           |
+| `profile`       | `UserProfile \| null` | `null`         |
+| `token`         | `string`              | `'fake-token'` |
+| `failInit`      | `Error`               | —              |
+| `failToken`     | `Error`               | —              |
+
+```ts
+provideAuth(withFakeAuth()); // anonymous visitor
+provideAuth(withFakeAuth({ authenticated: true })); // signed in, no roles
+```
+
+:::note[`profile` isn't published until you load it]
+Setting `profile` decides what `loadProfile()` _resolves to_. The `profile` signal
+stays `null` until something calls it — because the real adapters load it lazily,
+and a fake that pre-populated it would hide a missing `loadProfile()` call in the
+code under test.
+:::
+
+## Always await readiness
+
+`provideAuth()` starts `init()` when the injector is created, and it settles a
+microtask later. A test that renders immediately sees `ready()` as `false`:
+
+```ts
+const fixture = TestBed.createComponent(Header);
+
+await TestBed.inject(AuthService).whenReady(); // ← don't skip this
+
+fixture.detectChanges();
+expect(fixture.nativeElement.textContent).toContain('Test User');
+```
+
+Forgetting this is the single most common cause of a test that asserts against the
+loading state and reports a missing username.
+
+## Driving state from the test
+
+Inject `FakeAuthProvider` to change state mid-test. The same instance backs
+`AUTH_PROVIDER`, so the code under test sees every change:
+
+```ts
+const fake = TestBed.inject(FakeAuthProvider);
+
+fake.setRoles(['viewer']);
+fake.setClaims({ sub: 'user-2', name: 'Someone Else' });
+fake.setAuthenticated(false); // also clears claims, roles and profile
+```
+
+```ts
+it('hides the admin link when the role is lost', async () => {
+  TestBed.configureTestingModule({
+    providers: [provideAuth(withFakeAuth({ authenticated: true, roles: ['admin'] }))],
+  });
+
+  const fixture = TestBed.createComponent(Nav);
+  await TestBed.inject(AuthService).whenReady();
+  fixture.detectChanges();
+  expect(fixture.nativeElement.textContent).toContain('Admin');
+
+  TestBed.inject(FakeAuthProvider).setRoles(['viewer']);
+  fixture.detectChanges();
+  expect(fixture.nativeElement.textContent).not.toContain('Admin');
+});
+```
+
+`setAuthenticated(false)` clears claims, roles and profile as well, so a test can't
+accidentally assert against a signed-out user who still has roles — a state the real
+adapter never reaches.
+
+## Asserting recorded calls
+
+Every operation is recorded, so you can assert that your code asked for the right
+thing:
+
+| Property                 | Type                                    |
+| ------------------------ | --------------------------------------- |
+| `loginCalls`             | `RecordedCall<LoginOptions>[]`          |
+| `logoutCalls`            | `RecordedCall<LogoutOptions>[]`         |
+| `registerCalls`          | `RecordedCall<RegisterOptions>[]`       |
+| `updatePasswordCalls`    | `RecordedCall<UpdatePasswordOptions>[]` |
+| `accountManagementCalls` | `number`                                |
+| `initialized`            | `Signal<boolean>`                       |
+
+```ts
+it('returns the user to the page they came from', async () => {
+  const fake = TestBed.inject(FakeAuthProvider);
+
+  fixture.nativeElement.querySelector('button').click();
+
+  expect(fake.loginCalls.length).toBe(1);
+  expect(fake.loginCalls[0].options?.redirectUri).toBe('https://app.example.com/orders');
+});
+```
+
+Note that the fake's `login()` doesn't navigate anywhere — it records the call and
+resolves. That's what makes guard tests possible without a real redirect.
+
+## Guards
+
+Give the TestBed a real router and let it navigate:
+
+```ts
+import { provideRouter, Router } from '@angular/router';
+
+const setup = (options: FakeAuthOptions, config?: AuthConfiguration) => {
+  TestBed.configureTestingModule({
+    providers: [provideAuth(withFakeAuth(options), config), provideRouter(routes)],
+  });
+  return {
+    router: TestBed.inject(Router),
+    fake: TestBed.inject(FakeAuthProvider),
+  };
+};
+
+it('activates for a user with the role', async () => {
+  const { router } = setup({ authenticated: true, roles: ['admin'] });
+
+  expect(await router.navigate(['/admin'])).toBe(true);
+  expect(router.url).toBe('/admin');
+});
+
+it('redirects a user without the role to the forbidden route', async () => {
+  const { router } = setup({ authenticated: true, roles: ['viewer'] });
+
+  await router.navigate(['/admin']);
+
+  expect(router.url).toBe('/forbidden');
+});
+
+it('sends an anonymous user to the provider', async () => {
+  const { router, fake } = setup({ authenticated: false });
+
+  expect(await router.navigate(['/admin'])).toBe(false);
+  expect(fake.loginCalls.length).toBe(1);
+});
+```
+
+### Testing the SSR refusal
+
+Override `PLATFORM_ID` to assert the guard fails closed on the server:
+
+```ts
+TestBed.configureTestingModule({
+  providers: [
+    provideAuth(withFakeAuth({ authenticated: true, roles: ['admin'] })),
+    provideRouter(routes),
+    { provide: PLATFORM_ID, useValue: 'server' },
+  ],
+});
+
+expect(await TestBed.inject(Router).navigate(['/admin'])).toBe(false);
+```
+
+## The bearer interceptor
+
+Combine the fake adapter with `HttpTestingController`:
+
+```ts
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
+
+beforeEach(() => {
+  TestBed.configureTestingModule({
+    providers: [
+      provideAuth(withFakeAuth({ authenticated: true, token: 'test-token' })),
+      provideHttpClient(withInterceptors([authTokenInterceptor])),
+      provideHttpClientTesting(),
+    ],
+  });
+});
+
+it('signs allowlisted requests', async () => {
+  const http = TestBed.inject(HttpClient);
+  const controller = TestBed.inject(HttpTestingController);
+
+  http.get('/api/orders').subscribe();
+
+  // The interceptor awaits readiness, so let the microtask queue drain first.
+  await TestBed.inject(AuthService).whenReady();
+  await Promise.resolve();
+
+  const request = controller.expectOne('/api/orders');
+  expect(request.request.headers.get('Authorization')).toBe('Bearer test-token');
+});
+
+it('leaves other URLs alone', async () => {
+  TestBed.inject(HttpClient).get('/public/config.json').subscribe();
+
+  const request = TestBed.inject(HttpTestingController).expectOne('/public/config.json');
+  expect(request.request.headers.has('Authorization')).toBe(false);
+});
+```
+
+The non-matching case needs no awaiting: the interceptor passes those through
+synchronously, without touching `AuthService` at all.
+
+## Failure paths
+
+The two `fail*` options let you exercise error handling that's otherwise hard to
+reach.
+
+### An unreachable identity provider
+
+```ts
+it('shows a banner when sign-in is unavailable', async () => {
+  TestBed.configureTestingModule({
+    providers: [provideAuth(withFakeAuth({ failInit: new Error('network down') }))],
+  });
+
+  const auth = TestBed.inject(AuthService);
+  await auth.whenReady(); // resolves — never rejects
+
+  expect(auth.ready()).toBe(true);
+  expect(auth.authenticated()).toBe(false);
+  expect(auth.initError()).toBeInstanceOf(Error);
+});
+```
+
+### An unrenewable session
+
+```ts
+it('surfaces a failed refresh', async () => {
+  TestBed.configureTestingModule({
+    providers: [
+      provideAuth(withFakeAuth({ authenticated: true, failToken: new Error('expired') })),
+    ],
+  });
+
+  await expect(TestBed.inject(AuthService).getToken()).rejects.toThrow('expired');
+});
+```
+
+## Capabilities
+
+The fake implements all four, so `canRegister()` and friends are `true`. To test the
+UI you show when a capability is _missing_, provide a minimal adapter of your own:
+
+```ts
+const minimalProvider: AuthProvider = {
+  authenticated: signal(true).asReadonly(),
+  claims: signal<Claims | null>({ sub: 'user-1' }).asReadonly(),
+  roles: signal<readonly string[]>([]).asReadonly(),
+  init: () => Promise.resolve(),
+  getToken: () => Promise.resolve('token'),
+  login: () => Promise.resolve(),
+  logout: () => Promise.resolve(),
+};
+
+TestBed.configureTestingModule({
+  providers: [
+    provideAuth({
+      kind: 'minimal',
+      providers: [{ provide: AUTH_PROVIDER, useValue: minimalProvider }],
+    }),
+  ],
+});
+
+const auth = TestBed.inject(AuthService);
+expect(auth.canRegister()).toBe(false);
+await expect(auth.register()).rejects.toThrow(UnsupportedCapabilityError);
+```
+
+That object is the entire port — which is a useful reminder of how small it is. See
+[Custom provider](./custom-provider.mdx).
+
+## Component harness pattern
+
+For a suite with many authenticated component tests, wrap the setup once:
+
+```ts title="src/testing/auth-harness.ts"
+export const renderWithAuth = async <T>(
+  component: Type<T>,
+  options: FakeAuthOptions = { authenticated: true },
+  extraProviders: (Provider | EnvironmentProviders)[] = [],
+) => {
+  TestBed.configureTestingModule({
+    providers: [provideAuth(withFakeAuth(options)), ...extraProviders],
+  });
+
+  const fixture = TestBed.createComponent(component);
+  await TestBed.inject(AuthService).whenReady();
+  fixture.detectChanges();
+
+  return { fixture, fake: TestBed.inject(FakeAuthProvider) };
+};
+```
+
+```ts
+it('greets the user', async () => {
+  const { fixture } = await renderWithAuth(Header, {
+    authenticated: true,
+    claims: { name: 'Test User' },
+  });
+
+  expect(fixture.nativeElement.textContent).toContain('Test User');
+});
+```
+
+The awaiting is now in one place, which removes the most common source of flaky
+auth tests.
+
+## Next
+
+- [`withFakeAuth()` reference](../api/testing.mdx) — every option and recorded call
+- [Custom provider](./custom-provider.mdx) — implementing the port yourself

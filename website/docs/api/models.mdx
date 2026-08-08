@@ -1,0 +1,270 @@
+---
+id: models
+title: Models
+description: Reference for every type ngx-auth-client exports — Claims, UserProfile, LoginOptions, AuthConfiguration, AuthRouteData and their resolved shapes.
+---
+
+# Models
+
+Every type exported from `@ismailza/ngx-auth-client`.
+
+## `Claims`
+
+Decoded payload of the access token, normalised to the standard OIDC claim names.
+
+```ts
+interface Claims {
+  readonly sub?: string;
+  readonly iss?: string;
+  readonly aud?: string | string[];
+  readonly exp?: number;
+  readonly iat?: number;
+  readonly name?: string;
+  readonly preferred_username?: string;
+  readonly given_name?: string;
+  readonly family_name?: string;
+  readonly email?: string;
+  readonly email_verified?: boolean;
+  readonly [claim: string]: unknown;
+}
+```
+
+| Claim                | Meaning                                      |
+| -------------------- | -------------------------------------------- |
+| `sub`                | Subject — the stable, unique user identifier |
+| `iss`                | Issuer that minted the token                 |
+| `aud`                | Intended audience(s)                         |
+| `exp`                | Expiry, seconds since the epoch              |
+| `iat`                | Issued-at, seconds since the epoch           |
+| `name`               | Display name                                 |
+| `preferred_username` | Login name                                   |
+| `given_name`         | First name                                   |
+| `family_name`        | Last name                                    |
+| `email`              | Email address                                |
+| `email_verified`     | Whether the issuer verified the email        |
+
+Every field is optional — what's present depends on the scopes and mappers your realm
+applies. Provider-specific claims stay reachable through the index signature:
+
+```ts
+const tenant = auth.claims()?.['tenant_id'] as string | undefined;
+```
+
+The core never reads a provider-specific claim. Role extraction is the adapter's job —
+use `roles()` rather than reading `realm_access` yourself.
+
+## `UserProfile`
+
+Profile fetched from the provider's user endpoint.
+
+```ts
+interface UserProfile {
+  readonly id?: string;
+  readonly username?: string;
+  readonly email?: string;
+  readonly emailVerified?: boolean;
+  readonly firstName?: string;
+  readonly lastName?: string;
+  readonly attributes?: Readonly<Record<string, unknown>>;
+}
+```
+
+Distinct from `Claims`: claims come from the token and are free, the profile costs a
+network round-trip and is therefore [loaded on
+demand](../guides/capabilities.mdx#profile). `id` usually matches `Claims.sub`, and
+custom attributes land in `attributes`.
+
+## `LoginOptions`
+
+```ts
+interface LoginOptions {
+  redirectUri?: string;
+  scope?: string;
+  locale?: string;
+  prompt?: 'none' | 'login' | 'consent' | 'select_account';
+  loginHint?: string;
+}
+```
+
+| Field         | Purpose                                                                                             |
+| ------------- | --------------------------------------------------------------------------------------------------- |
+| `redirectUri` | Absolute URL to return to. Defaults to the adapter's configured value                               |
+| `scope`       | Additional OIDC scopes, space-separated                                                             |
+| `locale`      | Locale hint for the provider's hosted UI (`'fr'`, `'ar'`)                                           |
+| `prompt`      | OIDC `prompt`. `'none'` checks the SSO cookie silently and fails rather than showing a login screen |
+| `loginHint`   | Pre-fills the username field                                                                        |
+
+Every field is optional and **advisory** — an adapter forwards what its provider
+understands and ignores the rest rather than throwing. That's what keeps a component
+passing `locale` from crashing on a different adapter.
+
+## `RegisterOptions`
+
+```ts
+type RegisterOptions = LoginOptions;
+```
+
+Registration completes as a login, so it takes the same options.
+
+## `LogoutOptions`
+
+```ts
+interface LogoutOptions {
+  redirectUri?: string;
+}
+```
+
+Absolute URL to return to once the session has been terminated. Defaults to the
+adapter's configured post-logout redirect URI.
+
+## `UpdatePasswordOptions`
+
+```ts
+interface UpdatePasswordOptions {
+  redirectUri?: string;
+  locale?: string;
+}
+```
+
+`redirectUri` defaults to the **current page** — a password change happens mid-session,
+so returning the user to the app root would be surprising.
+
+## `AuthConfiguration`
+
+The second argument to `provideAuth()`.
+
+```ts
+interface AuthConfiguration {
+  forbiddenRoute?: string | null;
+  bearer?: BearerTokenConfiguration | false;
+}
+```
+
+| Field            | Type                                | Default        |
+| ---------------- | ----------------------------------- | -------------- |
+| `forbiddenRoute` | `string \| null`                    | `'/forbidden'` |
+| `bearer`         | `BearerTokenConfiguration \| false` | see below      |
+
+`null` for `forbiddenRoute` refuses activation without navigating; `false` for `bearer`
+attaches no token anywhere. See [Configuration](../guides/configuration.mdx).
+
+## `BearerTokenConfiguration`
+
+```ts
+interface BearerTokenConfiguration {
+  urlPattern?: RegExp;
+  methods?: readonly HttpMethod[];
+}
+```
+
+| Field        | Type                    | Default            |
+| ------------ | ----------------------- | ------------------ |
+| `urlPattern` | `RegExp`                | `/^\/api(\/.*)?$/` |
+| `methods`    | `readonly HttpMethod[]` | every method       |
+
+This is an **allowlist**: a pattern that matches nothing attaches no token, rather than
+leaking one to an unintended host. The `g` and `y` flags are stripped on resolution
+because they make `RegExp.test()` stateful.
+
+## `HttpMethod`
+
+```ts
+type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
+```
+
+## `ResolvedAuthConfiguration`
+
+`AuthConfiguration` after defaults have been applied — the shape provided as
+[`AUTH_CONFIG`](./tokens.mdx#auth_config).
+
+```ts
+interface ResolvedAuthConfiguration {
+  readonly forbiddenRoute: string | null;
+  readonly bearer: Required<BearerTokenConfiguration> | null;
+}
+```
+
+Note that `bearer: false` has become `bearer: null`, and both bearer fields are now
+required.
+
+### `resolveAuthConfiguration()`
+
+```ts
+function resolveAuthConfiguration(config: AuthConfiguration | undefined): ResolvedAuthConfiguration;
+```
+
+Merges your configuration over the defaults. Called by `provideAuth()`; exported for
+tests.
+
+An explicit `null` for `forbiddenRoute` is preserved rather than being replaced by the
+default — `??` would be wrong there.
+
+### Defaults
+
+```ts
+const BEARER_CONFIGURATION_DEFAULTS: Required<BearerTokenConfiguration> = {
+  urlPattern: /^\/api(\/.*)?$/,
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+};
+
+const AUTH_CONFIGURATION_DEFAULTS: ResolvedAuthConfiguration = {
+  forbiddenRoute: '/forbidden',
+  bearer: BEARER_CONFIGURATION_DEFAULTS,
+};
+```
+
+Both are exported, so you can reference a default rather than restate it.
+
+## `AuthRouteData`
+
+Route `data` contract read by `authGuard`.
+
+```ts
+interface AuthRouteData {
+  auth?: RoleRequirement;
+}
+
+interface RoleRequirement {
+  anyOf?: readonly string[];
+  allOf?: readonly string[];
+}
+```
+
+Omit `auth` to require authentication only. Requirements accumulate down the route
+tree — see [`authGuard`](./guards.mdx#authroutedata).
+
+## `AccumulatedRoleRequirements`
+
+```ts
+interface AccumulatedRoleRequirements {
+  readonly anyOf: readonly (readonly string[])[];
+  readonly allOf: readonly string[];
+}
+```
+
+What [`collectRoleRequirements()`](./guards.mdx#collectrolerequirements) returns. Each
+`anyOf` group stays separate because two ancestors each demanding "one of these" are two
+independent conditions.
+
+## `AuthFeature`
+
+```ts
+interface AuthFeature {
+  readonly kind: string;
+  readonly providers: readonly Provider[];
+}
+```
+
+An adapter packaged for `provideAuth()`. See [`provideAuth()`](./provide-auth.mdx#authfeature).
+
+## Types from other entry points
+
+| Type                               | Entry point                     |
+| ---------------------------------- | ------------------------------- |
+| `AuthProvider`                     | core — see [Ports](./ports.mdx) |
+| `SupportsRegistration` and friends | core — see [Ports](./ports.mdx) |
+| `KeycloakConfiguration`            | [`/keycloak`](./keycloak.mdx)   |
+| `KeycloakRoleSources`              | [`/keycloak`](./keycloak.mdx)   |
+| `ResolvedKeycloakConfiguration`    | [`/keycloak`](./keycloak.mdx)   |
+| `FakeAuthOptions`                  | [`/testing`](./testing.mdx)     |
+| `RecordedCall<T>`                  | [`/testing`](./testing.mdx)     |
