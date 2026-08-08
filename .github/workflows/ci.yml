@@ -32,6 +32,10 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Catches an omission that would otherwise only surface after publishing.
+      - name: Verify package contents
+        run: npm run verify:package
+
       # The compatibility matrix consumes exactly what would be published,
       # so pack once here instead of rebuilding per Angular version.
       - name: Pack
