@@ -1,0 +1,134 @@
+name: Bug Report
+description: Report something in @ismailza/ngx-auth-client that does not work as documented.
+title: 'fix: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a report. Please fill in as much as you can —
+        a minimal reproduction is by far the most useful thing you can provide.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched [existing issues](https://github.com/ismailza/ngx-auth-client/issues?q=is%3Aissue) and this has not been reported.
+          required: true
+        - label: I am using a [supported Angular version](https://github.com/ismailza/ngx-auth-client#angular-support) (>= 17).
+          required: true
+        - label: I reproduced this on the latest release of the library.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which part of the library misbehaves?
+      multiple: true
+      options:
+        - AuthService (signals, getToken, login/logout)
+        - provideAuth / configuration
+        - Keycloak adapter
+        - authGuard / route protection
+        - authTokenInterceptor (bearer attachment)
+        - Role mapping and normalization
+        - Fake adapter / testing utilities
+        - Types and models
+        - Build, packaging, or SSR
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the actual behaviour, including any error message or stack trace.
+      placeholder: |
+        After a token refresh, `auth.claims()` still holds the previous user's claims…
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Numbered steps, plus a link to a minimal repository or StackBlitz if you have one.
+      placeholder: |
+        1. Configure `provideAuth(withKeycloak({ url, realm, clientId }))`
+        2. Log in, then wait for the access token to near expiry
+        3. Call `auth.getToken()` and inspect the returned token
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Auth configuration
+      description: The `provideAuth(...)` / adapter options you use. Redact secrets and internal URLs.
+      render: ts
+      placeholder: |
+        provideAuth(
+          withKeycloak({
+            url: 'https://auth.example.com',
+            realm: 'my-realm',
+            clientId: 'my-app',
+            roles: { realm: true, resource: ['my-app'] },
+          }),
+          {
+            bearer: {
+              urlPattern: /^https:\/\/api\.example\.com(\/.*)?$/i,
+              methods: ['GET', 'POST', 'PUT', 'DELETE'],
+            },
+          },
+        )
+    validations:
+      required: false
+
+  - type: input
+    id: lib-version
+    attributes:
+      label: '@ismailza/ngx-auth-client version'
+      placeholder: 0.2.0
+    validations:
+      required: true
+
+  - type: input
+    id: angular-version
+    attributes:
+      label: Angular version
+      placeholder: 21.2.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Anything else about your setup that could matter.
+      value: |
+        - Node:
+        - Package manager:
+        - Browser / SSR:
+        - OS:
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Workarounds you found, related issues, or anything else worth knowing.
+    validations:
+      required: false
