@@ -27,7 +27,12 @@
         "test": {
           "builder": "@angular/build:unit-test",
           "options": {
-            "tsConfig": "projects/ngx-auth-client/tsconfig.spec.json"
+            "tsConfig": "projects/ngx-auth-client/tsconfig.spec.json",
+            "include": [
+              "**/*.spec.ts",
+              "../keycloak/**/*.spec.ts",
+              "../testing/**/*.spec.ts"
+            ]
           }
         }
       }

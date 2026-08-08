@@ -4,15 +4,18 @@
   "description": "A reactive authentication layer for Angular applications. Exposes auth state as signals, protects routes with a functional guard, and keeps your feature code free of any identity-provider imports.",
   "keywords": [
     "angular",
+    "keycloak",
     "auth",
-    "guard",
-    "security",
-    "interceptor",
-    "jwt",
+    "authentication",
     "oidc",
     "oauth2",
     "signals",
-    "state",
+    "zoneless",
+    "guard",
+    "jwt",
+    "security",
+    "interceptor",
+    "standalone",
     "typescript"
   ],
   "license": "MIT",
@@ -26,11 +29,22 @@
     "url": "https://github.com/ismailza/ngx-auth-client/issues"
   },
   "peerDependencies": {
-    "@angular/common": "^22.1.0",
-    "@angular/core": "^22.1.0"
+    "@angular/common": ">=17.0.0 <23.0.0",
+    "@angular/core": ">=17.0.0 <23.0.0",
+    "@angular/router": ">=17.0.0 <23.0.0",
+    "rxjs": "^7.4.0",
+    "keycloak-js": ">=25.0.0 <27.0.0"
+  },
+  "peerDependenciesMeta": {
+    "keycloak-js": {
+      "optional": true
+    }
   },
   "dependencies": {
     "tslib": "^2.3.0"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "sideEffects": false
 }

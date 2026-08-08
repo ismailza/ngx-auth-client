@@ -111,7 +111,7 @@ export class ProfileMenu {
 | --------------------------------------------------- | ----------------------------- | ------------------------- |
 | `authenticated`                                     | `Signal<boolean>`             |                           |
 | `claims`                                            | `Signal<Claims \| null>`      | Decoded token payload     |
-| `roles`                                             | `Signal<string[]>`            | Normalized by the adapter |
+| `roles`                                             | `Signal<readonly string[]>`   | Normalized by the adapter |
 | `profile`                                           | `Signal<UserProfile \| null>` | Loaded lazily             |
 | `getToken()`                                        | `Promise<string>`             | Refreshes if near expiry  |
 | `login(opts?)` / `logout(opts?)`                    | `Promise<void>`               |                           |
@@ -254,6 +254,10 @@ rather than opening a public issue.
 | 17 – 22 | ✅        |
 
 Signals-based state requires Angular 17+. Zoneless is supported but not required.
+
+Every release is verified against each supported major in CI — the packed tarball is
+type-checked with `ngc`, bundled through a production `ng build` (which runs the Angular
+linker over the shipped declarations) and executed in Node, for all three entry points.
 
 ## Roadmap
 
