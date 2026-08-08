@@ -1,6 +1,6 @@
 {
   "name": "@ismailza/ngx-auth-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A reactive authentication layer for Angular applications. Exposes auth state as signals, protects routes with a functional guard, and keeps your feature code free of any identity-provider imports.",
   "keywords": [
     "angular",

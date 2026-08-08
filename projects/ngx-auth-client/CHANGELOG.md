@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/ismailza/ngx-auth-client/compare/v0.1.0...v0.1.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* **ngx-auth-client:** republish to sync npm README ([3bf41b3](https://github.com/ismailza/ngx-auth-client/commit/3bf41b364d512b7e325a27d19156b9680acb7efc))
+* **ngx-auth-client:** republish to sync npm README ([479878d](https://github.com/ismailza/ngx-auth-client/commit/479878d00e414b14d47e1f4ef9be335d845a70b9))
+
 ## [0.1.0](https://github.com/ismailza/ngx-auth-client/compare/v0.0.1...v0.1.0) (2026-08-08)
 
 
