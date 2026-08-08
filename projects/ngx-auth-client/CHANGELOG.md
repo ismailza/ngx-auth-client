@@ -10,5 +10,3 @@
 * **keycloak:** add the Keycloak adapter ([028e6ce](https://github.com/ismailza/ngx-auth-client/commit/028e6ce9f0fa322fffbc62fad170c2b8b7399a47))
 * **ngx-auth-client:** initialize ngx-auth-client library with basic structure ([254b656](https://github.com/ismailza/ngx-auth-client/commit/254b6564cc88261c79a3692b50fa326357bedd86))
 * provider-agnostic auth core, Keycloak adapter, and a verified 17–22 support range ([f8dd7e7](https://github.com/ismailza/ngx-auth-client/commit/f8dd7e79804be0f2e462ddee1f13d612559a4055))
-
-## Changelog
