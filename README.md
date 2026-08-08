@@ -1,6 +1,30 @@
-# ngx-auth-client
+<p align="center">
+  <a href="https://ismailza.github.io/ngx-auth-client/">
+    <img src="https://ismailza.github.io/ngx-auth-client/img/logo.svg" alt="" width="88" height="88">
+  </a>
+</p>
 
-**Keycloak authentication for modern Angular — signals, zoneless, standalone.**
+<h1 align="center">ngx-auth-client</h1>
+
+<p align="center">
+  Keycloak authentication for modern Angular — signals, zoneless, standalone.
+</p>
+
+<p align="center">
+  <a href="https://ismailza.github.io/ngx-auth-client/"><strong>Documentation</strong></a> ·
+  <a href="https://www.npmjs.com/package/@ismailza/ngx-auth-client"><strong>npm</strong></a> ·
+  <a href="https://ismailza.github.io/ngx-auth-client/docs/getting-started/quick-start"><strong>Quick start</strong></a> ·
+  <a href="https://ismailza.github.io/ngx-auth-client/docs/api/provide-auth"><strong>API reference</strong></a>
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@ismailza/ngx-auth-client"><img src="https://img.shields.io/npm/v/@ismailza/ngx-auth-client.svg" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/@ismailza/ngx-auth-client"><img src="https://img.shields.io/npm/dm/@ismailza/ngx-auth-client.svg" alt="npm downloads"></a>
+  <a href="https://ismailza.github.io/ngx-auth-client/"><img src="https://img.shields.io/badge/docs-online-brightgreen.svg" alt="Documentation"></a>
+  <a href="https://github.com/ismailza/ngx-auth-client/actions/workflows/ci.yml"><img src="https://github.com/ismailza/ngx-auth-client/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/ismailza/ngx-auth-client/actions/workflows/release.yml"><img src="https://github.com/ismailza/ngx-auth-client/actions/workflows/release.yml/badge.svg" alt="Release"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@ismailza/ngx-auth-client.svg" alt="License"></a>
+</p>
 
 A reactive authentication layer for Angular applications. Exposes auth state as **signals**, protects routes with a **functional guard**, and keeps your feature code free of any identity-provider imports.
 
@@ -63,6 +87,8 @@ npm install @ismailza/ngx-auth-client keycloak-js
 
 `keycloak-js` is an **optional** peer dependency, required only by the Keycloak adapter. The core package has no identity-provider dependencies.
 
+→ [Installation guide](https://ismailza.github.io/ngx-auth-client/docs/getting-started/installation)
+
 ## Quick start
 
 ```ts
@@ -86,6 +112,8 @@ export const appConfig: ApplicationConfig = {
 ```
 
 That's the complete setup for the common case. Everything else is defaulted: `check-sso` on load, PKCE `S256`, automatic token refresh, bearer token attached to same-origin `/api/*` requests.
+
+→ [Quick start](https://ismailza.github.io/ngx-auth-client/docs/getting-started/quick-start) · [every `provideAuth()` option](https://ismailza.github.io/ngx-auth-client/docs/guides/configuration)
 
 ## Reading auth state
 
@@ -120,6 +148,8 @@ export class ProfileMenu {
 `getToken()` is the one deliberately promise-based member: a token refresh is an
 operation, not a state. Everything that _is_ state is a signal.
 
+→ [Reading auth state](https://ismailza.github.io/ngx-auth-client/docs/guides/auth-state) · [`AuthService` reference](https://ismailza.github.io/ngx-auth-client/docs/api/auth-service)
+
 ## Protecting routes
 
 ```ts
@@ -151,6 +181,8 @@ export const routes: Routes = [
 - Role requirements **accumulate down the route tree**, so a requirement on a parent
   route applies to its children.
 
+→ [Protecting routes](https://ismailza.github.io/ngx-auth-client/docs/guides/route-protection) · [`authGuard` reference](https://ismailza.github.io/ngx-auth-client/docs/api/guards)
+
 ## Attaching the token to requests
 
 ```ts
@@ -172,6 +204,8 @@ provideAuth(withKeycloak({ ... }), {
 
 Pairs directly with [`@ismailza/ngx-api-client`](https://github.com/ismailza/ngx-api-client)
 if you want a typed HTTP layer on top.
+
+→ [Attaching tokens](https://ismailza.github.io/ngx-auth-client/docs/guides/attaching-tokens) · [interceptor reference](https://ismailza.github.io/ngx-auth-client/docs/api/interceptors)
 
 ## Testing
 
@@ -198,6 +232,8 @@ TestBed.configureTestingModule({
 The fake is a real implementation of the same port, not a stub — guards, interceptors
 and components exercise the same code paths they do in production.
 
+→ [Testing guide](https://ismailza.github.io/ngx-auth-client/docs/guides/testing) · [testing entry point](https://ismailza.github.io/ngx-auth-client/docs/api/testing)
+
 ## Adding a provider
 
 The core depends on a single interface:
@@ -206,6 +242,7 @@ The core depends on a single interface:
 export interface AuthProvider {
   readonly authenticated: Signal<boolean>;
   readonly claims: Signal<Claims | null>;
+  readonly roles: Signal<readonly string[]>;
 
   init(): Promise<void>;
   getToken(): Promise<string>;
@@ -233,6 +270,8 @@ withKeycloak({
 });
 ```
 
+→ [Writing a custom provider](https://ismailza.github.io/ngx-auth-client/docs/guides/custom-provider) · [ports and capabilities](https://ismailza.github.io/ngx-auth-client/docs/api/ports)
+
 ## Security notes
 
 - **Tokens are held in memory only.** Nothing is written to `localStorage` or
@@ -243,6 +282,11 @@ withKeycloak({
   (no token attached) rather than leaking a token to a third-party host.
 - **SSR-safe.** Browser globals are guarded; the library no-ops on the server rather
   than throwing during prerender.
+
+Client-side role checks are UX, not authorisation — enforce every rule that matters in
+your API.
+
+→ [Security guide](https://ismailza.github.io/ngx-auth-client/docs/guides/security)
 
 Found a security issue? See [SECURITY.md](./SECURITY.md) — please report privately
 rather than opening a public issue.
@@ -258,6 +302,18 @@ Signals-based state requires Angular 17+. Zoneless is supported but not required
 Every release is verified against each supported major in CI — the packed tarball is
 type-checked with `ngc`, bundled through a production `ng build` (which runs the Angular
 linker over the shipped declarations) and executed in Node, for all three entry points.
+
+## Documentation
+
+Full documentation is at **[ismailza.github.io/ngx-auth-client](https://ismailza.github.io/ngx-auth-client/)**.
+
+| Section | Pages |
+| ------- | ----- |
+| **Getting started** | [Installation](https://ismailza.github.io/ngx-auth-client/docs/getting-started/installation) · [Quick start](https://ismailza.github.io/ngx-auth-client/docs/getting-started/quick-start) |
+| **Guides** | [Configuration](https://ismailza.github.io/ngx-auth-client/docs/guides/configuration) · [Reading auth state](https://ismailza.github.io/ngx-auth-client/docs/guides/auth-state) · [Protecting routes](https://ismailza.github.io/ngx-auth-client/docs/guides/route-protection) · [Attaching tokens](https://ismailza.github.io/ngx-auth-client/docs/guides/attaching-tokens) · [Keycloak adapter](https://ismailza.github.io/ngx-auth-client/docs/guides/keycloak) · [Capabilities](https://ismailza.github.io/ngx-auth-client/docs/guides/capabilities) · [Server-side rendering](https://ismailza.github.io/ngx-auth-client/docs/guides/server-side-rendering) · [Testing](https://ismailza.github.io/ngx-auth-client/docs/guides/testing) · [Custom provider](https://ismailza.github.io/ngx-auth-client/docs/guides/custom-provider) · [Security](https://ismailza.github.io/ngx-auth-client/docs/guides/security) |
+| **API reference** | [`provideAuth()`](https://ismailza.github.io/ngx-auth-client/docs/api/provide-auth) · [`AuthService`](https://ismailza.github.io/ngx-auth-client/docs/api/auth-service) · [`authGuard`](https://ismailza.github.io/ngx-auth-client/docs/api/guards) · [`authTokenInterceptor`](https://ismailza.github.io/ngx-auth-client/docs/api/interceptors) · [Keycloak entry point](https://ismailza.github.io/ngx-auth-client/docs/api/keycloak) · [Testing entry point](https://ismailza.github.io/ngx-auth-client/docs/api/testing) · [Ports](https://ismailza.github.io/ngx-auth-client/docs/api/ports) · [Models](https://ismailza.github.io/ngx-auth-client/docs/api/models) · [Injection tokens](https://ismailza.github.io/ngx-auth-client/docs/api/tokens) |
+
+The site is built from [`website/`](./website) and deploys on every push to `main`.
 
 ## Roadmap
 
