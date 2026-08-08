@@ -1,0 +1,223 @@
+---
+id: keycloak
+title: Keycloak entry point
+description: API reference for @ismailza/ngx-auth-client/keycloak — withKeycloak(), KeycloakConfiguration, role sources and the Keycloak injection tokens.
+---
+
+# Keycloak entry point
+
+```ts
+import {
+  withKeycloak,
+  KEYCLOAK_CONFIG,
+  KEYCLOAK_INSTANCE,
+  KEYCLOAK_CONFIGURATION_DEFAULTS,
+  extractRoles,
+  type KeycloakConfiguration,
+  type KeycloakRoleSources,
+  type ResolvedKeycloakConfiguration,
+} from '@ismailza/ngx-auth-client/keycloak';
+```
+
+Requires `keycloak-js` (`>=25.0.0 <27.0.0`) — an optional peer dependency of the
+package, needed only by this entry point.
+
+## `withKeycloak()`
+
+```ts
+function withKeycloak(config: KeycloakConfiguration): AuthFeature;
+```
+
+Configures Keycloak as the identity provider. Pass the result to `provideAuth()`.
+
+```ts
+provideAuth(
+  withKeycloak({
+    url: 'https://auth.example.com',
+    realm: 'my-realm',
+    clientId: 'my-app',
+    roles: { realm: true, resource: ['my-app'] },
+  }),
+);
+```
+
+It resolves the configuration against its defaults and returns providers for
+`KEYCLOAK_CONFIG`, `KEYCLOAK_INSTANCE` and `AUTH_PROVIDER`. `kind` is `'keycloak'`.
+
+`KEYCLOAK_INSTANCE` is constructed through a factory that checks `PLATFORM_ID`, so
+`new Keycloak()` — which touches browser globals — never runs on the server.
+
+## `KeycloakConfiguration`
+
+| Option                      | Type                                    | Default                           |
+| --------------------------- | --------------------------------------- | --------------------------------- |
+| `url`                       | `string`                                | **required**                      |
+| `realm`                     | `string`                                | **required**                      |
+| `clientId`                  | `string`                                | **required**                      |
+| `redirectUri`               | `string`                                | current page                      |
+| `postLogoutRedirectUri`     | `string`                                | Keycloak's default                |
+| `onLoad`                    | `KeycloakOnLoad`                        | `'check-sso'`                     |
+| `checkLoginIframe`          | `boolean`                               | `false`                           |
+| `silentCheckSsoRedirectUri` | `string`                                | —                                 |
+| `pkceMethod`                | `KeycloakPkceMethod`                    | `'S256'`                          |
+| `enableLogging`             | `boolean`                               | `false`                           |
+| `minTokenValidity`          | `number` (seconds)                      | `30`                              |
+| `roles`                     | `KeycloakRoleSources`                   | `{ realm: true, resource: true }` |
+| `mapRoles`                  | `(claims: Claims) => readonly string[]` | —                                 |
+
+`KeycloakOnLoad` is `'check-sso' | 'login-required'`; `KeycloakPkceMethod` is
+`'S256' | false`. Both come from `keycloak-js`.
+
+### Notes on individual options
+
+**`url`** — the server root. No `/auth` suffix on Keycloak 17+.
+
+**`onLoad`** — `'check-sso'` restores an existing session silently and leaves the user
+anonymous otherwise. `'login-required'` redirects to the login page immediately.
+
+**`checkLoginIframe`** — off by default. The iframe breaks under third-party-cookie
+restrictions and adds console noise; `onTokenExpired` covers the same ground.
+
+**`pkceMethod`** — kept out of the "off by omission" path deliberately. Forgetting an
+option should never weaken a security control.
+
+**`minTokenValidity`** — seconds of remaining validity below which `getToken()`
+refreshes before returning. Above the threshold, `getToken()` resolves without a
+network call.
+
+**`mapRoles`** — full override of role extraction, taking precedence over `roles`.
+Runs inside a `computed()` on every claims change, so keep it cheap.
+
+See the [Keycloak guide](../guides/keycloak.mdx) for realm setup and silent SSO.
+
+## `KeycloakRoleSources`
+
+```ts
+interface KeycloakRoleSources {
+  realm?: boolean;
+  resource?: boolean | readonly string[];
+}
+```
+
+| Field      | Type                           | Default | Meaning                                                           |
+| ---------- | ------------------------------ | ------- | ----------------------------------------------------------------- |
+| `realm`    | `boolean`                      | `true`  | Include `realm_access.roles`                                      |
+| `resource` | `boolean \| readonly string[]` | `true`  | `true` = every client, array = named clients only, `false` = none |
+
+Naming clients explicitly is the safer choice when several clients define roles with
+colliding names. See [Role sources](../guides/keycloak.mdx#role-sources).
+
+## `ResolvedKeycloakConfiguration`
+
+```ts
+type ResolvedKeycloakConfiguration = KeycloakConfiguration &
+  Required<
+    Pick<
+      KeycloakConfiguration,
+      'onLoad' | 'checkLoginIframe' | 'pkceMethod' | 'minTokenValidity' | 'roles'
+    >
+  >;
+```
+
+What `withKeycloak()` provides as `KEYCLOAK_CONFIG`: your configuration with the five
+defaulted fields guaranteed present.
+
+`withKeycloak()` strips `undefined` values before merging, so an explicitly-undefined
+field doesn't erase its default — a surprising way to lose PKCE otherwise.
+
+## `KEYCLOAK_CONFIGURATION_DEFAULTS`
+
+```ts
+const KEYCLOAK_CONFIGURATION_DEFAULTS = {
+  onLoad: 'check-sso',
+  checkLoginIframe: false,
+  pkceMethod: 'S256',
+  minTokenValidity: 30,
+  roles: { realm: true, resource: true },
+} as const;
+```
+
+Exported so you can reference a default rather than restate it.
+
+## Injection tokens
+
+### `KEYCLOAK_CONFIG`
+
+```ts
+const KEYCLOAK_CONFIG: InjectionToken<ResolvedKeycloakConfiguration>;
+```
+
+The resolved configuration. Useful for reading a value you configured — the realm name
+for a display string, say — without threading it through your own service.
+
+### `KEYCLOAK_INSTANCE`
+
+```ts
+const KEYCLOAK_INSTANCE: InjectionToken<Keycloak | null>;
+```
+
+The underlying `keycloak-js` instance, or **`null` on a non-browser platform**.
+
+An escape hatch for genuinely Keycloak-specific work — authorisation-policy
+evaluation, custom required actions — that has no meaning in a provider-agnostic port:
+
+```ts
+@Injectable({ providedIn: 'root' })
+export class PolicyService {
+  private readonly keycloak = inject(KEYCLOAK_INSTANCE);
+
+  hasResourceRole(role: string): boolean {
+    return this.keycloak?.hasResourceRole(role, 'my-app') ?? false;
+  }
+}
+```
+
+Injecting it couples that file to Keycloak, which is the point: the coupling stays
+visible and local instead of being smuggled into `AuthService`. Always handle `null`.
+
+## `KeycloakAuthProvider`
+
+The adapter class itself, provided as `AUTH_PROVIDER` by `withKeycloak()`. Exported for
+type reference; you don't instantiate it.
+
+It implements `AuthProvider` and all four capability interfaces, because Keycloak
+genuinely offers all of them. State changes reach the signals through Keycloak's
+callbacks (`onAuthSuccess`, `onAuthRefreshSuccess`, `onAuthError`,
+`onAuthRefreshError`, `onAuthLogout`, `onTokenExpired`), translated in one place.
+
+Built on `keycloak-js` rather than `keycloak-angular`, which version-locks to a single
+Angular major — owning the integration is what allows Angular 17–22 support from one
+release.
+
+## `extractRoles()`
+
+```ts
+function extractRoles(
+  claims: Claims | null,
+  config: Pick<ResolvedKeycloakConfiguration, 'roles' | 'mapRoles'>,
+): readonly string[];
+```
+
+Normalises Keycloak's two role locations into a flat `string[]`. Exported mainly for
+testing your role configuration:
+
+```ts
+expect(
+  extractRoles(
+    {
+      realm_access: { roles: ['user'] },
+      resource_access: { 'my-app': { roles: ['admin'] } },
+    },
+    { roles: { realm: false, resource: ['my-app'] } },
+  ),
+).toEqual(['admin']);
+```
+
+Every claim is treated as untrusted in shape: a token from a misconfigured mapper
+yields no roles rather than a crash inside a route guard. Returns `[]` for `null`
+claims.
+
+## Next
+
+- [Keycloak guide](../guides/keycloak.mdx) — realm setup, silent SSO, token refresh
+- [Ports](./ports.mdx) — the interface this adapter implements

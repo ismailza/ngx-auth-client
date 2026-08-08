@@ -1,0 +1,159 @@
+---
+id: interceptors
+title: authTokenInterceptor
+description: API reference for authTokenInterceptor — the allowlist-driven bearer token interceptor, its ordering rules and its behaviour during startup.
+---
+
+# `authTokenInterceptor`
+
+Attaches `Authorization: Bearer <token>` to outgoing requests that match the
+configured allowlist, refreshing the token first when it's close to expiry.
+
+```ts
+const authTokenInterceptor: HttpInterceptorFn;
+```
+
+```ts
+provideHttpClient(withInterceptors([authTokenInterceptor]));
+```
+
+## Behaviour
+
+| Condition                           | Result                                                 |
+| ----------------------------------- | ------------------------------------------------------ |
+| URL or method outside the allowlist | Passed through untouched, synchronously                |
+| `bearer: false` in configuration    | Passed through untouched                               |
+| Matches, user unauthenticated       | Sent **bare** — no header, no error                    |
+| Matches, user authenticated         | Cloned with the header, token refreshed if near expiry |
+
+Two of those are deliberate rather than obvious.
+
+**It awaits `whenReady()`** before deciding whether to sign. A request fired during
+startup would otherwise go out unsigned while the session was still restoring, and
+come back `401` even though the user was signed in.
+
+**Unauthenticated requests are not rejected.** They go out bare and let the API answer
+`401`. Rejecting would turn "not signed in yet" into a client-side exception in code
+that only asked for data.
+
+Note that the non-matching path never touches `AuthService`, so requests outside the
+allowlist aren't delayed by initialisation.
+
+## The allowlist
+
+Read from [`AUTH_CONFIG`](./tokens.mdx#auth_config), set by `provideAuth()`:
+
+```ts
+provideAuth(withKeycloak({ ... }), {
+  bearer: {
+    urlPattern: /^https:\/\/api\.example\.com(\/.*)?$/i,
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  },
+});
+```
+
+| Field        | Type                    | Default                                             |
+| ------------ | ----------------------- | --------------------------------------------------- |
+| `urlPattern` | `RegExp`                | `/^\/api(\/.*)?$/` — same-origin, relative `/api/*` |
+| `methods`    | `readonly HttpMethod[]` | every method                                        |
+
+Both must match. The URL is tested as your code wrote it, so a relative request stays
+relative. Methods are compared upper-cased.
+
+:::danger[It is an allowlist, and it fails closed]
+A pattern matching nothing attaches **no token** — it does not fall back to attaching
+one everywhere. A too-broad pattern silently ships your access token to every host
+your app calls. See [Security](../guides/security.mdx#the-bearer-allowlist-fails-closed).
+:::
+
+## Ordering
+
+Register it **last** — innermost, closest to the network:
+
+```ts
+withInterceptors([
+  errorInterceptor, // outermost
+  retryInterceptor,
+  authTokenInterceptor, // innermost
+]);
+```
+
+The first interceptor in the array is the outermost; each subsequent one is nested
+inside it.
+
+Retry interceptors re-issue the request they received. If the auth interceptor runs
+_outside_ the retry one, every attempt replays the header captured on the first try —
+so a retry after the token expires sends a stale token and fails again. Innermost,
+each attempt is signed fresh.
+
+The interceptor is registered by you rather than by `provideAuth()` precisely because
+only you know what else is in the chain.
+
+## Handling 401
+
+The interceptor refreshes proactively, so a `401` means more than an expired access
+token. Handle it in an outer interceptor of your own:
+
+```ts
+export const authErrorInterceptor: HttpInterceptorFn = (req, next) => {
+  const auth = inject(AuthService);
+
+  return next(req).pipe(
+    catchError((error: HttpErrorResponse) => {
+      if (error.status === 401 && auth.authenticated()) {
+        void auth.login({ redirectUri: globalThis.location.href });
+      }
+      return throwError(() => error);
+    }),
+  );
+};
+```
+
+The `authenticated()` check keeps a `401` from a public endpoint from kicking an
+anonymous visitor to a login page.
+
+## Signing a request yourself
+
+For anything outside `HttpClient`:
+
+```ts
+const token = await this.auth.getToken();
+
+await fetch('https://api.example.com/upload', {
+  headers: { Authorization: `Bearer ${token}` },
+  method: 'POST',
+  body: formData,
+});
+```
+
+## Under SSR
+
+Nobody is authenticated on the server, so requests go out bare. See [Server-side
+rendering](../guides/server-side-rendering.mdx#server-side-calls-to-your-api).
+
+## Testing
+
+```ts
+TestBed.configureTestingModule({
+  providers: [
+    provideAuth(withFakeAuth({ authenticated: true, token: 'test-token' })),
+    provideHttpClient(withInterceptors([authTokenInterceptor])),
+    provideHttpClientTesting(),
+  ],
+});
+
+TestBed.inject(HttpClient).get('/api/orders').subscribe();
+
+await TestBed.inject(AuthService).whenReady();
+await Promise.resolve(); // let the interceptor's await settle
+
+const request = TestBed.inject(HttpTestingController).expectOne('/api/orders');
+expect(request.request.headers.get('Authorization')).toBe('Bearer test-token');
+```
+
+See [Testing](../guides/testing.mdx#the-bearer-interceptor).
+
+## Next
+
+- [Attaching tokens](../guides/attaching-tokens.mdx) — the guide, with the allowlist patterns
+- [Configuration](../guides/configuration.mdx#bearer) — every `bearer` option

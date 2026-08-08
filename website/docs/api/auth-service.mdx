@@ -1,0 +1,310 @@
+---
+id: auth-service
+title: AuthService
+description: Complete API reference for AuthService — state signals, readiness, capability flags, role predicates and session operations.
+---
+
+# `AuthService`
+
+The single service application code injects. Provided in root, so it needs no
+registration.
+
+```ts
+private readonly auth = inject(AuthService);
+```
+
+It wraps the configured [`AuthProvider`](./ports.mdx) and adds three things the raw
+port deliberately leaves out: initialisation state, capability detection, and role
+predicates.
+
+## Summary
+
+| Member                     | Type                          |
+| -------------------------- | ----------------------------- |
+| `authenticated`            | `Signal<boolean>`             |
+| `claims`                   | `Signal<Claims \| null>`      |
+| `roles`                    | `Signal<readonly string[]>`   |
+| `profile`                  | `Signal<UserProfile \| null>` |
+| `ready`                    | `Signal<boolean>`             |
+| `initError`                | `Signal<unknown>`             |
+| `canRegister`              | `Signal<boolean>`             |
+| `canManageAccount`         | `Signal<boolean>`             |
+| `canUpdatePassword`        | `Signal<boolean>`             |
+| `canLoadProfile`           | `Signal<boolean>`             |
+| `whenReady()`              | `Promise<void>`               |
+| `getToken()`               | `Promise<string>`             |
+| `login(options?)`          | `Promise<void>`               |
+| `logout(options?)`         | `Promise<void>`               |
+| `register(options?)`       | `Promise<void>`               |
+| `accountManagement()`      | `Promise<void>`               |
+| `updatePassword(options?)` | `Promise<void>`               |
+| `loadProfile()`            | `Promise<UserProfile>`        |
+| `hasRole(role)`            | `boolean`                     |
+| `hasAnyRole(roles)`        | `boolean`                     |
+| `hasAllRoles(roles)`       | `boolean`                     |
+
+## State
+
+### `authenticated`
+
+```ts
+readonly authenticated: Signal<boolean>;
+```
+
+Whether a valid session currently exists. Forwarded straight from the adapter.
+
+`false` during initialisation, before anything is known — pair it with
+[`ready()`](#initialisation-state) to tell "not signed in" from "not known yet".
+
+### `claims`
+
+```ts
+readonly claims: Signal<Claims | null>;
+```
+
+Decoded access-token payload, `null` when unauthenticated. Normalised to the standard
+OIDC claim names, with provider-specific claims reachable through an index signature.
+See [`Claims`](./models.mdx#claims).
+
+### `roles`
+
+```ts
+readonly roles: Signal<readonly string[]>;
+```
+
+Roles held by the user, normalised by the adapter — never `null`, empty when there
+are none. Where they were read from is the adapter's decision; see [Role
+sources](../guides/keycloak.mdx#role-sources).
+
+### `profile`
+
+```ts
+readonly profile: Signal<UserProfile | null>;
+```
+
+Profile loaded by [`loadProfile()`](#loadprofile). `null` until the first successful
+load, and on adapters without the capability it stays `null` forever. See
+[`UserProfile`](./models.mdx#userprofile).
+
+## Initialisation state
+
+### `ready`
+
+```ts
+readonly ready: Signal<boolean>;
+```
+
+Whether initialisation has settled — successfully or not. `false` during the initial
+load.
+
+```ts
+@if (!auth.ready()) {
+  <app-spinner />
+} @else if (auth.authenticated()) {
+  <app-shell />
+} @else {
+  <app-landing />
+}
+```
+
+### `initError`
+
+```ts
+readonly initError: Signal<unknown>;
+```
+
+The error that failed initialisation, or `null`.
+
+`null` after a normal start whether or not a session was found; non-`null` only when
+the adapter's `init()` threw — a misconfigured realm, a DNS failure, an unreachable
+provider. A failed init is not a crash: it means "not authenticated", and it's
+surfaced as state so an application with public pages still boots.
+
+### `whenReady()`
+
+```ts
+whenReady(): Promise<void>;
+```
+
+Resolves once the session has been restored, or definitively not restored.
+
+**Never rejects.** Inspect `initError()` to distinguish "no session" from "the
+provider is unreachable".
+
+```ts
+await this.auth.whenReady();
+
+if (this.auth.authenticated()) {
+  // …
+}
+```
+
+Safe to await repeatedly — it returns the same promise every time.
+
+## Capabilities
+
+Four signals reporting what the configured adapter supports. See
+[Capabilities](../guides/capabilities.mdx).
+
+| Signal              | Guards                |
+| ------------------- | --------------------- |
+| `canRegister`       | `register()`          |
+| `canManageAccount`  | `accountManagement()` |
+| `canUpdatePassword` | `updatePassword()`    |
+| `canLoadProfile`    | `loadProfile()`       |
+
+```ts
+@if (auth.canRegister()) {
+  <button (click)="auth.register()">Create an account</button>
+}
+```
+
+Each is a `computed()` over a type guard that checks for the method's presence on the
+provider. Calling an unsupported capability rejects with
+[`UnsupportedCapabilityError`](./ports.mdx#unsupportedcapabilityerror).
+
+## Operations
+
+### `getToken()`
+
+```ts
+getToken(): Promise<string>;
+```
+
+Returns an access token valid **now**, refreshing it first if it's close to expiry.
+
+Throws when the session cannot be renewed and the user must log in again.
+
+Promise-based on purpose: a refresh is an operation, not state. Modelling it as a
+signal would mean either handing out a possibly-expired string, or exposing a loading
+flag beside it.
+
+```ts
+const token = await this.auth.getToken();
+```
+
+You rarely need this — [`authTokenInterceptor`](./interceptors.mdx) calls it for
+requests on the allowlist. Reach for it when signing a `fetch()` call or a WebSocket
+handshake.
+
+### `login()`
+
+```ts
+login(options?: LoginOptions): Promise<void>;
+```
+
+Sends the user to the provider's login page. The promise reflects the _initiation_ of
+the redirect, not its completion — the page is navigating away.
+
+```ts
+await this.auth.login({
+  redirectUri: globalThis.location.href,
+  prompt: 'login', // force re-authentication
+  loginHint: 'user@example.com',
+});
+```
+
+See [`LoginOptions`](./models.mdx#loginoptions). Throws on a non-browser platform.
+
+### `logout()`
+
+```ts
+logout(options?: LogoutOptions): Promise<void>;
+```
+
+Terminates the session.
+
+```ts
+await this.auth.logout({ redirectUri: 'https://app.example.com/goodbye' });
+```
+
+It cannot retract an already-issued access token — see
+[Security](../guides/security.mdx#log-out-where-it-counts).
+
+### `register()`
+
+```ts
+register(options?: RegisterOptions): Promise<void>;
+```
+
+Sends the user to the provider's sign-up page. Rejects with
+`UnsupportedCapabilityError` when `canRegister()` is `false`.
+
+### `accountManagement()`
+
+```ts
+accountManagement(): Promise<void>;
+```
+
+Sends the user to the provider's self-service account console. Takes no options — the
+provider decides where to return them. Rejects when `canManageAccount()` is `false`.
+
+### `updatePassword()`
+
+```ts
+updatePassword(options?: UpdatePasswordOptions): Promise<void>;
+```
+
+Sends the user to the provider's password-change flow. Defaults to returning them to
+the **current page**. Rejects when `canUpdatePassword()` is `false`.
+
+### `loadProfile()`
+
+```ts
+loadProfile(): Promise<UserProfile>;
+```
+
+Fetches the user profile and publishes it on [`profile`](#profile). Rejects when
+`canLoadProfile()` is `false`.
+
+```ts
+const profile = await this.auth.loadProfile();
+// …or read this.auth.profile() afterwards
+```
+
+## Role predicates
+
+All three read the `roles` signal, so they're reactive inside a `computed()` or a
+template.
+
+### `hasRole()`
+
+```ts
+hasRole(role: string): boolean;
+```
+
+### `hasAnyRole()`
+
+```ts
+hasAnyRole(roles: readonly string[]): boolean;
+```
+
+Whether the user holds **at least one**. An empty list passes.
+
+### `hasAllRoles()`
+
+```ts
+hasAllRoles(roles: readonly string[]): boolean;
+```
+
+Whether the user holds **every one**. An empty list passes.
+
+```ts
+protected readonly canPublish = computed(() => this.auth.hasRole('editor'));
+```
+
+:::warning[Reactive only inside a reactive context]
+Assigning `hasRole('editor')` to a plain field evaluates it once at construction and
+freezes it. Wrap it in `computed()`.
+:::
+
+:::danger[Not authorisation]
+These are UX helpers. Enforce every requirement that matters server-side — see
+[Security](../guides/security.mdx#enforce-every-rule-server-side).
+:::
+
+## Next
+
+- [Reading auth state](../guides/auth-state.mdx) — these members in context
+- [Ports](./ports.mdx) — the interface `AuthService` wraps
+- [Models](./models.mdx) — `Claims`, `UserProfile`, `LoginOptions`

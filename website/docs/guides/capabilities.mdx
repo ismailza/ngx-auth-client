@@ -1,0 +1,239 @@
+---
+id: capabilities
+title: Capabilities
+description: Optional provider features — registration, account console, password change and profile loading — feature-detected so no adapter fakes what it lacks.
+---
+
+# Capabilities
+
+Not every identity provider hosts a sign-up flow, a self-service account console
+or a password-change page. Four features are therefore **optional**: an adapter
+implements them only if its provider genuinely offers them.
+
+| Capability      | Method                     | `AuthService` flag    |
+| --------------- | -------------------------- | --------------------- |
+| Registration    | `register(options?)`       | `canRegister()`       |
+| Account console | `accountManagement()`      | `canManageAccount()`  |
+| Password change | `updatePassword(options?)` | `canUpdatePassword()` |
+| Profile loading | `loadProfile()`            | `canLoadProfile()`    |
+
+The Keycloak adapter implements all four. The [fake adapter](./testing.mdx) does
+too, so tests exercise the same branches.
+
+## Why not just put them on the port?
+
+Folding every provider's features into the core interface would force adapters to
+stub methods they can't support — and a stub either throws (so the flag you needed
+was "does this throw?") or silently does nothing (worse). That's how multi-provider
+abstractions decay into a lowest common denominator plus a `getNativeClient()`
+escape hatch.
+
+Instead, the core feature-detects, and exposes a matching signal so you can hide UI
+you cannot deliver:
+
+```ts
+@Component({
+  template: `
+    @if (auth.canRegister()) {
+      <button (click)="auth.register()">Create an account</button>
+    }
+  `,
+})
+export class SignUpButton {
+  protected readonly auth = inject(AuthService);
+}
+```
+
+Calling an unsupported capability rejects with
+[`UnsupportedCapabilityError`](../api/ports.mdx#unsupportedcapabilityerror) rather
+than failing quietly:
+
+```ts
+try {
+  await auth.register();
+} catch (error) {
+  if (error instanceof UnsupportedCapabilityError) {
+    // error.capability === 'registration'
+  }
+}
+```
+
+Guarding the call with the `can*` signal avoids it entirely. If you only ever
+target Keycloak, all four are always available and the checks are optional
+belt-and-braces — but they're what makes swapping the adapter a one-file change
+later.
+
+## Registration
+
+Sends the user to the provider's hosted sign-up page. On Keycloak this is the
+login page's registration action, so the realm must have **User registration**
+enabled.
+
+```ts
+await auth.register({
+  redirectUri: 'https://app.example.com/welcome',
+  locale: 'fr',
+});
+```
+
+`RegisterOptions` is the same shape as [`LoginOptions`](../api/models.mdx#loginoptions):
+`redirectUri`, `scope`, `locale`, `prompt` and `loginHint` are all accepted, and
+the adapter forwards what Keycloak understands.
+
+Registration completes as a login, so the user comes back authenticated and your
+`authenticated()` signal flips.
+
+## Account console
+
+Sends the user to the provider's self-service account pages — where they manage
+their own profile, sessions, credentials and consents.
+
+```ts
+@Component({
+  template: `
+    @if (auth.canManageAccount()) {
+      <button (click)="auth.accountManagement()">Manage my account</button>
+    }
+  `,
+})
+export class AccountLink {
+  protected readonly auth = inject(AuthService);
+}
+```
+
+It takes no options: the provider decides where to return the user, and Keycloak
+returns them to the page they left.
+
+Delegating this is usually the right call — the account console handles MFA
+enrolment, credential management and session revocation, and reimplementing any of
+it means handling credentials yourself.
+
+## Password change
+
+Sends the user to the provider's password-change flow mid-session.
+
+```ts
+await auth.updatePassword();
+```
+
+By default they return to **the page they're currently on**, not to the adapter's
+configured `redirectUri` — a password change is an errand in the middle of a
+session, so dropping the user back at the app root would be surprising. Override it
+if you want somewhere specific:
+
+```ts
+await auth.updatePassword({
+  redirectUri: 'https://app.example.com/settings/security',
+  locale: 'fr',
+});
+```
+
+On Keycloak this triggers the `UPDATE_PASSWORD` required action, so the realm must
+allow users to update their own password.
+
+:::note[Realms using an external identity source]
+If the realm federates to LDAP or an external identity provider, password changes
+may be disabled server-side. `canUpdatePassword()` reports what the _adapter_
+supports, not what the realm permits — Keycloak will refuse the action itself, and
+the user is returned without a change. Hide the button per-realm if that applies to
+you.
+:::
+
+## Profile
+
+`claims()` is free — it's already in the token. A `UserProfile` costs a network
+round-trip to the provider's user endpoint, so it's loaded on demand:
+
+```ts
+@Component({
+  template: `
+    @if (auth.profile(); as profile) {
+      <p>{{ profile.firstName }} {{ profile.lastName }}</p>
+      <p>{{ profile.email }}</p>
+    }
+  `,
+})
+export class ProfileCard implements OnInit {
+  protected readonly auth = inject(AuthService);
+
+  async ngOnInit(): Promise<void> {
+    if (this.auth.canLoadProfile() && this.auth.authenticated()) {
+      await this.auth.loadProfile();
+    }
+  }
+}
+```
+
+`loadProfile()` resolves with the profile **and** publishes it on the `profile`
+signal, so you can either await the result or read the signal in a template.
+
+| Field           | Type                                |
+| --------------- | ----------------------------------- |
+| `id`            | `string`                            |
+| `username`      | `string`                            |
+| `email`         | `string`                            |
+| `emailVerified` | `boolean`                           |
+| `firstName`     | `string`                            |
+| `lastName`      | `string`                            |
+| `attributes`    | `Readonly<Record<string, unknown>>` |
+
+Every field is optional — what's populated depends on the realm's user-profile
+configuration. Custom attributes land in `attributes`.
+
+`profile()` is `null` until the first successful load, and reset to `null` on
+logout. It stays `null` forever on adapters without the capability.
+
+:::tip[Reach for claims first]
+Most of what a profile carries — name, email, username — is already in `claims()`
+when the realm includes those scopes in the token. Load the profile only when you
+need something the token doesn't carry, typically a custom attribute.
+:::
+
+### Loading it once, at startup
+
+To have the profile available everywhere without each component asking:
+
+```ts
+@Injectable({ providedIn: 'root' })
+export class ProfileLoader {
+  private readonly auth = inject(AuthService);
+
+  constructor() {
+    effect(() => {
+      if (this.auth.authenticated() && this.auth.canLoadProfile()) {
+        void this.auth.loadProfile();
+      }
+    });
+  }
+}
+```
+
+The `effect` re-runs when `authenticated()` flips, so a user who signs in later in
+the session also gets a profile. Instantiate it from an environment initializer, or
+inject it in your root component.
+
+## Checking capabilities from an adapter's perspective
+
+The `can*` signals are backed by type guards you can use directly when writing
+code against the port:
+
+```ts
+import { supportsProfile, AUTH_PROVIDER } from '@ismailza/ngx-auth-client';
+
+const provider = inject(AUTH_PROVIDER);
+
+if (supportsProfile(provider)) {
+  // narrowed — `provider.loadProfile()` type-checks here
+  await provider.loadProfile();
+}
+```
+
+Application code should prefer `AuthService`; these are for adapter authors and for
+library code sitting at the port. See [Ports and
+capabilities](../api/ports.mdx).
+
+## Next
+
+- [Custom provider](./custom-provider.mdx) — implementing the port, capabilities included
+- [`AuthService` reference](../api/auth-service.mdx#capabilities)
+- [Ports reference](../api/ports.mdx)

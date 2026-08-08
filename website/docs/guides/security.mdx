@@ -1,0 +1,140 @@
+---
+id: security
+title: Security
+description: How ngx-auth-client handles tokens — memory-only storage, PKCE by default, an allowlist that fails closed — and what remains your responsibility.
+---
+
+# Security
+
+The defaults are chosen so that forgetting an option never weakens a control. This
+page states what the library guarantees, and — more importantly — what it doesn't.
+
+## Tokens are held in memory only
+
+Nothing is written to `localStorage` or `sessionStorage`.
+
+That's the single most consequential choice here. A token in web storage is readable
+by any script that runs on the page, so **one XSS payload anywhere in your
+application — or in any dependency you ship — is enough to exfiltrate a valid access
+token** and use it from anywhere until it expires.
+
+Session continuity comes from the identity provider's own SSO cookie instead. On a
+page reload the adapter silently re-authenticates against it, which is why a hard
+refresh keeps you signed in without anything being persisted client-side.
+
+The cost is that a refresh requires the provider to be reachable, and that
+[third-party-cookie restrictions](./keycloak.mdx#silent-check-sso) can interfere with
+silent checks. That's a real trade-off, taken deliberately.
+
+## PKCE is on by default
+
+`pkceMethod` defaults to `'S256'`, and it can't be switched off by omission — you'd
+have to pass `pkceMethod: false` explicitly.
+
+PKCE binds the authorization code to the client that requested it, so an intercepted
+code can't be redeemed by anyone else. For a public client — which every browser
+application is, since it cannot keep a secret — it's the control that makes the
+authorization-code flow safe.
+
+There is no supported configuration in which this library uses the implicit flow.
+
+## The bearer allowlist fails closed
+
+The interceptor attaches tokens to an **allowlist** of requests, defaulting to
+same-origin `/api/*`. A pattern that matches nothing attaches nothing; it does not
+fall back to attaching everywhere.
+
+That direction is deliberate. A missing header produces a `401` you notice in
+development. An over-broad pattern silently sends your access token to every host
+your application talks to — analytics, error reporting, a CDN — any of which can then
+act as the user against your API.
+
+```ts
+// ✗ Any host you call receives the user's access token.
+bearer: {
+  urlPattern: /.*/;
+}
+
+// ✓ One origin you control.
+bearer: {
+  urlPattern: /^https:\/\/api\.example\.com(\/.*)?$/i;
+}
+```
+
+The `g` and `y` flags are stripped from whatever pattern you pass, because
+`RegExp.test()` with either one is stateful and would match every _other_ request.
+
+Never put a token in a query string — query strings reach server logs, browser
+history and `Referer` headers. Use the header.
+
+## The guard fails closed on the server
+
+Under SSR, `authGuard` refuses activation without redirecting. There is no session to
+evaluate server-side, and rendering protected content into a response that a CDN or
+proxy might cache would leak it to the next visitor. See [Server-side
+rendering](./server-side-rendering.mdx#why-the-guard-fails-closed).
+
+## Malformed claims never throw
+
+Role extraction treats every claim as untrusted in shape. A token from a misconfigured
+mapper — `realm_access` as a string, `roles` as an object, numbers mixed into the
+array — yields an empty or filtered list rather than an exception inside a route
+guard. Failing to extract a role denies access; throwing inside a guard produces an
+unhandled rejection and an ambiguous outcome.
+
+## What is still your responsibility
+
+The library runs in the browser. Everything it enforces is enforceable only there —
+which means none of it is authorisation.
+
+### Enforce every rule server-side
+
+:::danger[Client-side role checks are UX, not security]
+`authGuard`, `hasRole()` and a hidden button all improve the experience. None of them
+stops anybody. A user can edit their own token in devtools, skip your application
+entirely and call your API directly.
+
+**Every role requirement that matters must be enforced by the API**, which validates
+the token's signature, issuer, audience and expiry, and makes its own authorisation
+decision. Treat the client-side checks as a way to avoid showing actions that will
+fail.
+:::
+
+### Validate tokens properly in your API
+
+Verify the signature against the provider's JWKS, and check `iss`, `aud` and `exp`.
+Decoding a JWT without verifying it is equivalent to trusting user input — which is
+exactly what it is.
+
+### Keep the client public and the origins narrow
+
+A browser application cannot hold a client secret, so the Keycloak client must be
+public with no credentials in your bundle. Set Web origins to the origins you actually
+serve, never `*`, and list explicit redirect URIs rather than a wildcard on the host.
+See [Realm setup](./keycloak.mdx#realm-setup).
+
+### Serve over HTTPS, with a CSP
+
+Tokens travel in headers and the SSO cookie travels with redirects, so plain HTTP
+exposes both. A Content-Security-Policy is the mitigation that matters most here:
+since tokens live in memory, the remaining path to them is script injection, and a
+strict CSP is what closes it.
+
+### Log out where it counts
+
+`logout()` ends the provider session and clears local state. It cannot retract an
+access token already issued — those stay valid until they expire. Keep access-token
+lifetimes short (minutes, not hours) if immediate revocation matters, and use the
+provider's session-management or token-introspection endpoints for hard revocation.
+
+## Reporting a vulnerability
+
+Please report privately rather than opening a public issue — see
+[SECURITY.md](https://github.com/ismailza/ngx-auth-client/blob/main/SECURITY.md) for
+the disclosure process and supported versions.
+
+## Next
+
+- [Attaching tokens](./attaching-tokens.mdx) — the allowlist in practice
+- [Keycloak adapter](./keycloak.mdx#realm-setup) — client and origin configuration
+- [Server-side rendering](./server-side-rendering.mdx) — why nothing renders protected

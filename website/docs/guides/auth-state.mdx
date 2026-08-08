@@ -1,0 +1,241 @@
+---
+id: auth-state
+title: Reading auth state
+description: Read authentication state in Angular components through signals — authenticated, claims, roles, readiness — and check roles reactively.
+---
+
+# Reading auth state
+
+`AuthService` is the only thing your components inject. It exposes state as
+signals and operations as promises.
+
+```ts
+import { Component, computed, inject } from '@angular/core';
+import { AuthService } from '@ismailza/ngx-auth-client';
+
+@Component({
+  selector: 'app-profile-menu',
+  template: `
+    @if (auth.authenticated()) {
+      <span>{{ auth.claims()?.name }}</span>
+      <button (click)="auth.logout()">Sign out</button>
+    } @else {
+      <button (click)="auth.login()">Sign in</button>
+    }
+  `,
+})
+export class ProfileMenu {
+  protected readonly auth = inject(AuthService);
+}
+```
+
+Because these are signals, the template re-renders on login, logout and token
+refresh — in a zoneless application as well as a zone-based one.
+
+## The state signals
+
+| Signal          | Type                          | Notes                                                               |
+| --------------- | ----------------------------- | ------------------------------------------------------------------- |
+| `authenticated` | `Signal<boolean>`             | Whether a valid session exists                                      |
+| `claims`        | `Signal<Claims \| null>`      | Decoded access-token payload; `null` when signed out                |
+| `roles`         | `Signal<readonly string[]>`   | Normalised by the adapter; never `null`                             |
+| `profile`       | `Signal<UserProfile \| null>` | `null` until [`loadProfile()`](./capabilities.mdx#profile) resolves |
+| `ready`         | `Signal<boolean>`             | Whether initialisation has settled                                  |
+| `initError`     | `Signal<unknown>`             | What failed during initialisation, if anything                      |
+
+## Claims
+
+`claims()` is the decoded token payload, normalised to the standard OIDC claim
+names:
+
+```ts
+const claims = this.auth.claims();
+
+claims?.sub; // stable user id
+claims?.name; // display name
+claims?.preferred_username; // login name
+claims?.email;
+claims?.email_verified;
+claims?.given_name;
+claims?.family_name;
+claims?.exp; // expiry, seconds since epoch
+```
+
+Provider-specific claims stay reachable through an index signature, though
+reading one couples that file to your provider:
+
+```ts
+const tenant = this.auth.claims()?.['tenant_id'] as string | undefined;
+```
+
+For role claims specifically, don't do this — use `roles()`, which the adapter has
+already normalised. See [Role mapping](./keycloak.mdx#role-sources).
+
+:::note[Claims come from the token, not from a request]
+`claims()` is free — it's already in memory. A `UserProfile` costs a network
+round-trip, which is why it's [loaded on
+demand](./capabilities.mdx#profile) instead of being part of the initial state.
+:::
+
+## Checking roles
+
+Three predicates, all reading the `roles` signal:
+
+```ts
+auth.hasRole('admin'); // holds this role
+auth.hasAnyRole(['admin', 'owner']); // holds at least one
+auth.hasAllRoles(['admin', 'finance']); // holds every one
+```
+
+An empty list passes in both `hasAnyRole()` and `hasAllRoles()` — "no requirement"
+is satisfied by anyone.
+
+### Wrap them in `computed()`
+
+The predicates are plain methods, not signals. Calling one inside a `computed()`
+or a template keeps it reactive, because it reads `roles()` internally:
+
+```ts
+export class Toolbar {
+  private readonly auth = inject(AuthService);
+
+  // ✓ recomputes when roles change
+  protected readonly canPublish = computed(() => this.auth.hasRole('editor'));
+
+  // ✗ evaluated once at construction, then frozen
+  protected readonly canPublishBroken = this.auth.hasRole('editor');
+}
+```
+
+Calling `auth.hasRole('editor')` directly in a template also works — the template
+is itself a reactive context — but a named `computed()` reads better and is
+evaluated once per change rather than once per usage.
+
+:::warning[Role checks in the UI are not authorisation]
+Hiding a button prevents a mistake, not an attack. Anyone can edit the token
+claims in their own browser or call your API directly. Every role requirement
+that matters must be enforced **server-side**; the client-side check exists so
+users aren't shown actions that will fail.
+:::
+
+## Readiness
+
+Restoring a session is asynchronous. `provideAuth()` starts it during bootstrap
+but doesn't await it, so on the very first frames `authenticated()` is `false`
+simply because nothing is known yet — not because the user is signed out.
+
+`ready()` distinguishes those two states:
+
+```ts
+@Component({
+  template: `
+    @if (!auth.ready()) {
+      <app-spinner />
+    } @else if (auth.authenticated()) {
+      <app-app-shell />
+    } @else {
+      <app-landing />
+    }
+  `,
+})
+export class Root {
+  protected readonly auth = inject(AuthService);
+}
+```
+
+Without the `ready()` branch, a signed-in user sees the landing page flash before
+the session resolves.
+
+In code that isn't a template, await it instead:
+
+```ts
+await this.auth.whenReady();
+
+if (this.auth.authenticated()) {
+  // …
+}
+```
+
+`whenReady()` **never rejects.** A failed initialisation still resolves it, and
+leaves the user unauthenticated — which is the correct outcome for the common case
+of "there was no session to restore".
+
+### Telling "no session" from "provider unreachable"
+
+When you need that distinction, check `initError()`:
+
+```ts
+@Component({
+  template: `
+    @if (auth.initError()) {
+      <app-banner>Sign-in is temporarily unavailable.</app-banner>
+    }
+  `,
+})
+export class AuthBanner {
+  protected readonly auth = inject(AuthService);
+}
+```
+
+`initError()` is `null` after a normal start, whether or not a session was found.
+It's non-`null` only when the adapter's `init()` threw — a misconfigured realm, a
+DNS failure, an unreachable identity provider.
+
+Treating that as a crash would be wrong: an application whose public pages work
+fine shouldn't fail to boot because the login server is down. So the error is
+surfaced as state, and it's up to you whether to show it.
+
+## Operations
+
+Everything that _does_ something returns a promise:
+
+| Method             | Returns           | Notes                                  |
+| ------------------ | ----------------- | -------------------------------------- |
+| `login(options?)`  | `Promise<void>`   | Redirects to the provider's login page |
+| `logout(options?)` | `Promise<void>`   | Terminates the session                 |
+| `getToken()`       | `Promise<string>` | Refreshes first if close to expiry     |
+| `whenReady()`      | `Promise<void>`   | Never rejects                          |
+
+`getToken()` is the one member people expect to be a signal and isn't. A token
+refresh is a network operation with a failure mode; modelling it as state would
+mean either handing out a possibly-expired string or exposing a loading flag
+alongside it. See [`AuthService`](../api/auth-service.mdx#gettoken).
+
+You rarely call `getToken()` yourself — [`authTokenInterceptor`](./attaching-tokens.mdx)
+does it for you.
+
+### Login and logout options
+
+```ts
+auth.login({
+  redirectUri: 'https://app.example.com/dashboard',
+  scope: 'openid profile email',
+  locale: 'fr',
+  prompt: 'login', // force re-authentication
+  loginHint: 'user@example.com', // pre-fill the username
+});
+
+auth.logout({ redirectUri: 'https://app.example.com/goodbye' });
+```
+
+Every field is optional and advisory — an adapter forwards what its provider
+understands and ignores the rest rather than throwing. See
+[`LoginOptions`](../api/models.mdx#loginoptions).
+
+## Returning the user where they came from
+
+`login()` with no `redirectUri` returns the user to the adapter's configured
+default. To send them back to the page they're on:
+
+```ts
+auth.login({ redirectUri: globalThis.location.href });
+```
+
+`authGuard` already does this for routes it protects, so this is only for
+sign-in buttons you place yourself.
+
+## Next
+
+- [Protecting routes](./route-protection.mdx) — the same role logic, applied to navigation
+- [Capabilities](./capabilities.mdx) — sign-up, account console, profile loading
+- [`AuthService` reference](../api/auth-service.mdx) — every member, in full

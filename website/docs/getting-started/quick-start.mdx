@@ -1,0 +1,211 @@
+---
+id: quick-start
+title: Quick start
+description: Wire up Keycloak, read auth state in a component, protect a route by role, and call an authenticated API.
+---
+
+# Quick start
+
+Five steps: configure the adapter, read the state, protect a route, call an API,
+then test it without a Keycloak server.
+
+Assumes the package is [installed](./installation.mdx).
+
+## 1. Configure the adapter
+
+```ts title="src/app/app.config.ts"
+import { ApplicationConfig } from '@angular/core';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import { provideRouter } from '@angular/router';
+import { provideAuth, authTokenInterceptor } from '@ismailza/ngx-auth-client';
+import { withKeycloak } from '@ismailza/ngx-auth-client/keycloak';
+import { routes } from './app.routes';
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideAuth(
+      withKeycloak({
+        url: 'https://auth.example.com',
+        realm: 'my-realm',
+        clientId: 'my-app',
+        // Only realm roles, and only from this client, count as "the user's roles".
+        roles: { realm: true, resource: ['my-app'] },
+      }),
+      { forbiddenRoute: '/no-access' },
+    ),
+    provideHttpClient(withInterceptors([authTokenInterceptor])),
+    provideRouter(routes),
+  ],
+};
+```
+
+The session starts restoring during bootstrap. Nothing waits for it except the
+guard and the interceptor.
+
+## 2. Read the state in a component
+
+`AuthService` is the only thing your components inject. Every piece of state on it
+is a signal, so templates update on login, logout and token refresh.
+
+```ts title="src/app/header.ts"
+import { Component, computed, inject } from '@angular/core';
+import { AuthService } from '@ismailza/ngx-auth-client';
+
+@Component({
+  selector: 'app-header',
+  template: `
+    @if (auth.authenticated()) {
+      <span>{{ auth.claims()?.name }}</span>
+
+      @if (isAdmin()) {
+        <a routerLink="/admin">Admin</a>
+      }
+
+      <button (click)="auth.logout()">Sign out</button>
+    } @else {
+      <button (click)="auth.login()">Sign in</button>
+    }
+  `,
+})
+export class Header {
+  protected readonly auth = inject(AuthService);
+  protected readonly isAdmin = computed(() => this.auth.hasRole('admin'));
+}
+```
+
+`hasRole()` reads the `roles` signal, so wrapping it in `computed()` keeps it
+reactive. See [Reading auth state](../guides/auth-state.mdx).
+
+## 3. Protect a route
+
+`authGuard` handles both authentication and role requirements. Requirements go in
+the route's `data.auth`.
+
+```ts title="src/app/app.routes.ts"
+import { Routes } from '@angular/router';
+import { authGuard, AuthRouteData } from '@ismailza/ngx-auth-client';
+
+export const routes: Routes = [
+  { path: '', loadComponent: () => import('./home').then((m) => m.Home) },
+
+  // Authentication only.
+  {
+    path: 'dashboard',
+    canActivate: [authGuard],
+    loadComponent: () => import('./dashboard').then((m) => m.Dashboard),
+  },
+
+  // Authentication plus at least one of these roles.
+  {
+    path: 'admin',
+    canActivate: [authGuard],
+    data: { auth: { anyOf: ['admin', 'owner'] } } satisfies AuthRouteData,
+    loadComponent: () => import('./admin').then((m) => m.Admin),
+  },
+
+  // Authentication plus every one of these roles.
+  {
+    path: 'billing',
+    canActivate: [authGuard],
+    data: { auth: { allOf: ['admin', 'finance'] } } satisfies AuthRouteData,
+    loadComponent: () => import('./billing').then((m) => m.Billing),
+  },
+
+  { path: 'no-access', loadComponent: () => import('./no-access').then((m) => m.NoAccess) },
+];
+```
+
+What happens:
+
+- **Not signed in** → sent to Keycloak's login page, and returned to the route
+  they originally asked for.
+- **Signed in, missing a role** → redirected to `forbiddenRoute`.
+- **Signed in with the roles** → activated.
+
+Requirements **accumulate down the route tree**, so declaring one on a parent
+route protects every child. See [Protecting
+routes](../guides/route-protection.mdx).
+
+## 4. Call an authenticated API
+
+You don't touch the token. The interceptor attaches it:
+
+```ts title="src/app/order.service.ts"
+@Injectable({ providedIn: 'root' })
+export class OrderService {
+  private readonly http = inject(HttpClient);
+
+  list(): Observable<Order[]> {
+    // `Authorization: Bearer …` is added by authTokenInterceptor.
+    return this.http.get<Order[]>('/api/orders');
+  }
+}
+```
+
+By default only same-origin `/api/*` requests are signed. It's an **allowlist** —
+static assets and third-party hosts never receive your token unless you say so.
+For an API on another origin, widen it explicitly:
+
+```ts
+provideAuth(withKeycloak({ ... }), {
+  bearer: { urlPattern: /^https:\/\/api\.example\.com(\/.*)?$/i },
+});
+```
+
+See [Attaching tokens to requests](../guides/attaching-tokens.mdx).
+
+## 5. Test it without Keycloak
+
+Testing authenticated components shouldn't need a Keycloak server or a mocked
+`window.location`. Swap the adapter — nothing under test knows the difference:
+
+```ts title="src/app/admin.spec.ts"
+import { TestBed } from '@angular/core/testing';
+import { provideAuth } from '@ismailza/ngx-auth-client';
+import { withFakeAuth, FakeAuthProvider } from '@ismailza/ngx-auth-client/testing';
+
+it('shows the admin link to admins', async () => {
+  TestBed.configureTestingModule({
+    providers: [
+      provideAuth(
+        withFakeAuth({
+          authenticated: true,
+          roles: ['admin'],
+          claims: { sub: 'user-1', name: 'Test User' },
+        }),
+      ),
+    ],
+  });
+
+  const fixture = TestBed.createComponent(Header);
+  await TestBed.inject(AuthService).whenReady();
+  fixture.detectChanges();
+
+  expect(fixture.nativeElement.textContent).toContain('Admin');
+
+  // Drive state changes from the test.
+  TestBed.inject(FakeAuthProvider).setRoles(['viewer']);
+  fixture.detectChanges();
+
+  expect(fixture.nativeElement.textContent).not.toContain('Admin');
+});
+```
+
+The fake is a real implementation of the same port, not a stub — guards,
+interceptors and components run the same code paths they do in production. See
+[Testing](../guides/testing.mdx).
+
+## What you have now
+
+- Auth state as signals, reactive in a zoneless application
+- Routes protected by authentication and by role
+- Tokens attached to your API calls and refreshed before expiry
+- Tokens held in memory only — nothing in `localStorage`
+- Tests that run without an identity provider
+
+## Next
+
+- [Configuration](../guides/configuration.mdx) — every `provideAuth()` option
+- [Keycloak adapter](../guides/keycloak.mdx) — role sources, silent SSO, realm setup
+- [Capabilities](../guides/capabilities.mdx) — sign-up, account console, password change
+- [API reference](../api/provide-auth.mdx) — the full public surface

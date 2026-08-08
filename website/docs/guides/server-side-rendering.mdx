@@ -1,0 +1,162 @@
+---
+id: server-side-rendering
+title: Server-side rendering
+description: How ngx-auth-client behaves under Angular SSR and prerendering — why the guard fails closed, and how to structure a hybrid application.
+---
+
+# Server-side rendering
+
+The library is SSR-safe: it no-ops on the server rather than throwing during
+render or prerender. What it does **not** do is authenticate anyone there.
+
+## What happens on the server
+
+| Piece                  | Server behaviour                                                        |
+| ---------------------- | ----------------------------------------------------------------------- |
+| `withKeycloak()`       | No `keycloak-js` instance is constructed; `KEYCLOAK_INSTANCE` is `null` |
+| Adapter `init()`       | Returns immediately, leaving the user unauthenticated                   |
+| `AuthService.ready()`  | Becomes `true` — initialisation settled, with no session                |
+| `authenticated()`      | `false`                                                                 |
+| `authGuard`            | Returns `false` — refuses without redirecting                           |
+| `authTokenInterceptor` | Sends requests bare (nobody is authenticated)                           |
+| `login()` / `logout()` | Throw — there is no browser to redirect                                 |
+
+## Why the guard fails closed
+
+Two reasons, and both matter.
+
+**There is no session to evaluate.** Tokens are held in memory in the browser and
+never written to a cookie the server could read. The server genuinely does not know
+who the user is, so any answer other than "refuse" would be a guess.
+
+**A rendered response can be cached.** If the guard optimistically allowed
+activation, the server would render a protected page's HTML. Anything in front of
+your application that caches responses — a CDN, a reverse proxy, Angular's own
+prerendering — could then serve one user's protected markup to another. Refusing
+means protected routes render nothing server-side and resolve on the client.
+
+The visible consequence: a protected route delivers no server-rendered content, so
+the user sees your app shell until the client takes over.
+
+## Structuring a hybrid application
+
+Put your public, SEO-relevant content on unguarded routes, and everything behind
+`authGuard` on routes you accept will be client-rendered:
+
+```ts title="src/app/app.routes.ts"
+export const routes: Routes = [
+  // Server-rendered: crawlable, cacheable, no auth involved.
+  { path: '', loadComponent: () => import('./landing').then((m) => m.Landing) },
+  { path: 'pricing', loadComponent: () => import('./pricing').then((m) => m.Pricing) },
+  { path: 'docs/:slug', loadComponent: () => import('./article').then((m) => m.Article) },
+
+  // Client-rendered: personalised, and not something a crawler should index.
+  {
+    path: 'app',
+    canActivate: [authGuard],
+    loadChildren: () => import('./app-shell/routes').then((m) => m.routes),
+  },
+];
+```
+
+This is rarely a real loss. Protected pages are personalised by definition — they
+shouldn't be indexed, and they can't be cached per-user at the edge anyway.
+
+### Excluding protected routes from prerendering
+
+With Angular's `outputMode: 'server'` or explicit prerender configuration, tell the
+builder not to prerender guarded paths — a prerender pass would only capture the
+refusal:
+
+```ts title="src/app/app.routes.server.ts"
+import { RenderMode, ServerRoute } from '@angular/ssr';
+
+export const serverRoutes: ServerRoute[] = [
+  { path: '', renderMode: RenderMode.Prerender },
+  { path: 'pricing', renderMode: RenderMode.Prerender },
+  { path: 'app/**', renderMode: RenderMode.Client },
+  { path: '**', renderMode: RenderMode.Server },
+];
+```
+
+## Guarding your own code
+
+Anything in your application that calls `login()`, `logout()` or `getToken()` at
+construction time runs on the server too. Guard it:
+
+```ts
+export class SessionBootstrap {
+  private readonly auth = inject(AuthService);
+  private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
+
+  async start(): Promise<void> {
+    if (!this.isBrowser) {
+      return;
+    }
+    await this.auth.whenReady();
+    // …
+  }
+}
+```
+
+`AuthService` state reads (`authenticated()`, `claims()`, `roles()`) are always
+safe — they just report an unauthenticated user. It's the _operations_ that need a
+browser.
+
+:::note[The error message tells you which]
+Calling an operation server-side throws with `'Keycloak is unavailable on this
+platform. Guard authentication calls with isPlatformBrowser() when running with
+SSR.'` If you see that during a build, a prerender pass reached code that assumes a
+browser.
+:::
+
+## Avoiding the unauthenticated flash
+
+The server renders the anonymous view, and the client then restores the session —
+so a signed-in user can briefly see the signed-out UI after hydration. Branch on
+`ready()` so the transition is "loading → signed in" rather than "signed out →
+signed in":
+
+```ts
+@Component({
+  template: `
+    @if (!auth.ready()) {
+      <app-header-skeleton />
+    } @else if (auth.authenticated()) {
+      <app-user-menu />
+    } @else {
+      <a (click)="auth.login()">Sign in</a>
+    }
+  `,
+})
+export class Header {
+  protected readonly auth = inject(AuthService);
+}
+```
+
+On the server `ready()` is `true` and `authenticated()` is `false`, so the anonymous
+branch renders — matching what an anonymous visitor should get.
+
+:::tip[Reserve the space]
+Render a skeleton with the same dimensions as the signed-in header. It costs a few
+lines of CSS and removes the layout shift when the session resolves.
+:::
+
+## Server-side calls to your API
+
+The bearer interceptor attaches nothing on the server, because nobody is
+authenticated there. A `resolve` or a component that fetches during SSR therefore
+hits your API unauthenticated.
+
+For personalised data, fetch it on the client — inside a guarded route, which is
+client-rendered anyway. Angular's `HttpTransferCache` won't help here: there's no
+session to make the server request on behalf of.
+
+If you need genuine server-side authenticated rendering, that requires a
+cookie-based session your Node server can read and exchange — an architecture this
+library doesn't model, since it exists to keep tokens out of persistent storage.
+
+## Next
+
+- [Security](./security.mdx) — why tokens are memory-only
+- [Protecting routes](./route-protection.mdx#on-the-server-the-guard-refuses)

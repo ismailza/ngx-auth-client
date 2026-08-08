@@ -1,0 +1,187 @@
+---
+id: configuration
+title: Configuration
+description: Every provide-agnostic option accepted by provideAuth() — the forbidden route and the bearer-token allowlist — with defaults and rationale.
+---
+
+# Configuration
+
+`provideAuth()` takes two arguments:
+
+```ts
+provideAuth(feature, config?)
+```
+
+| Argument  | Type                | Purpose                                                                 |
+| --------- | ------------------- | ----------------------------------------------------------------------- |
+| `feature` | `AuthFeature`       | The adapter — `withKeycloak({ … })`, `withFakeAuth({ … })`, or your own |
+| `config`  | `AuthConfiguration` | Provider-agnostic options. Optional; every field has a default          |
+
+The split is the point: **anything provider-specific belongs in the adapter's own
+configuration**, not here. Keycloak's realm, PKCE method and role sources are
+arguments to `withKeycloak()` (see the [Keycloak guide](./keycloak.mdx)). What
+remains in `AuthConfiguration` is behaviour the core owns regardless of who
+issues the tokens.
+
+## Everything at a glance
+
+```ts
+provideAuth(withKeycloak({ url, realm, clientId }), {
+  forbiddenRoute: '/forbidden',
+  bearer: {
+    urlPattern: /^\/api(\/.*)?$/,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  },
+});
+```
+
+Those are the defaults, written out. Omitting `config` entirely gives you exactly
+this.
+
+| Option           | Type                                | Default        |
+| ---------------- | ----------------------------------- | -------------- |
+| `forbiddenRoute` | `string \| null`                    | `'/forbidden'` |
+| `bearer`         | `BearerTokenConfiguration \| false` | see below      |
+
+## `forbiddenRoute`
+
+Where `authGuard` sends an **authenticated** user who lacks the roles a route
+requires.
+
+```ts
+provideAuth(withKeycloak({ ... }), { forbiddenRoute: '/no-access' });
+```
+
+Note the distinction: an _unauthenticated_ user is sent to the identity
+provider's login page, never here. This route is for the case where signing in
+again wouldn't help — the user is who they say they are and still isn't allowed
+in.
+
+Make sure the path you name has a route, or the redirect lands on your wildcard
+route.
+
+### Refusing without navigating
+
+Pass `null` to block activation and stay put, letting the application decide what
+to do:
+
+```ts
+provideAuth(withKeycloak({ ... }), { forbiddenRoute: null });
+```
+
+The guard then returns `false`. Navigation is cancelled and the user remains on
+the current page, which is useful when a route is reached from a menu you'd
+rather not have appeared at all — pair it with hiding the link via
+`auth.hasRole()`.
+
+:::note[`null` is meaningful, `undefined` is not]
+`provideAuth()` treats an explicit `null` as "no redirect" and only falls back to
+`/forbidden` when the field is absent. Passing `undefined` gets you the default.
+:::
+
+## `bearer`
+
+Which outgoing requests receive an `Authorization: Bearer …` header from
+[`authTokenInterceptor`](../api/interceptors.mdx).
+
+```ts
+provideAuth(withKeycloak({ ... }), {
+  bearer: {
+    urlPattern: /^https:\/\/api\.example\.com(\/.*)?$/i,
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  },
+});
+```
+
+| Field        | Type                    | Default                                                      |
+| ------------ | ----------------------- | ------------------------------------------------------------ |
+| `urlPattern` | `RegExp`                | `/^\/api(\/.*)?$/` — same-origin, relative `/api/*` requests |
+| `methods`    | `readonly HttpMethod[]` | every method                                                 |
+
+`HttpMethod` is `'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS'`.
+
+Both fields must match for the header to be attached. A request that fails either
+one goes out untouched.
+
+:::danger[This is an allowlist, and it fails closed]
+A pattern that matches nothing attaches **no token** — it does not fall back to
+attaching one everywhere. That's the safe direction to fail: a missing header
+produces a `401` you'll notice in development, whereas a too-broad pattern
+silently ships your access token to whatever third-party host you happen to call.
+
+Match on a full origin (`/^https:\/\/api\.example\.com/`) rather than a bare path
+fragment when your API isn't same-origin.
+:::
+
+### Disabling it entirely
+
+Pass `false` when a different layer owns outgoing authorisation:
+
+```ts
+provideAuth(withKeycloak({ ... }), { bearer: false });
+```
+
+The interceptor then attaches nothing, even if it's registered. `AuthService.getToken()`
+still works, so you can sign requests yourself.
+
+### The `g` and `y` flags are stripped
+
+If you pass a pattern with the global or sticky flag, `provideAuth()` removes it:
+
+```ts
+bearer: {
+  urlPattern: /\/api\//g;
+} // stored as /\/api\//
+```
+
+Both flags make `RegExp.test()` stateful through `lastIndex`, so the same pattern
+would match every _other_ request. A token silently missing from half your calls
+is a miserable bug to track down, so it's prevented rather than documented as a
+caveat.
+
+## Where configuration ends up
+
+`provideAuth()` resolves your options against the defaults and provides the
+result as `AUTH_CONFIG`. The guard and the interceptor read it from there.
+
+```ts
+const config = inject(AUTH_CONFIG); // ResolvedAuthConfiguration
+```
+
+In the resolved shape, `bearer: false` has become `bearer: null`, and both bearer
+fields are required rather than optional. See [Injection
+tokens](../api/tokens.mdx).
+
+## Runtime configuration
+
+Values that aren't known at build time — a realm resolved per tenant, a URL from
+a config endpoint — need the adapter to be constructed after that value is
+available. Because `withKeycloak()` is a plain function call, this is just
+ordinary JavaScript:
+
+```ts title="src/main.ts"
+const runtime = await fetch('/config.json').then((r) => r.json());
+
+bootstrapApplication(App, {
+  providers: [
+    provideAuth(
+      withKeycloak({
+        url: runtime.keycloakUrl,
+        realm: runtime.realm,
+        clientId: runtime.clientId,
+      }),
+    ),
+    provideHttpClient(withInterceptors([authTokenInterceptor])),
+  ],
+});
+```
+
+Fetching before `bootstrapApplication()` keeps it simple, at the cost of delaying
+bootstrap by one request. Serve `config.json` from the same origin so it isn't a
+cross-origin round trip on the critical path.
+
+## Next
+
+- [Keycloak adapter](./keycloak.mdx) — the provider-specific half of the configuration
+- [Attaching tokens](./attaching-tokens.mdx) — the bearer allowlist in practice
+- [Protecting routes](./route-protection.mdx) — where `forbiddenRoute` is used

@@ -1,0 +1,174 @@
+---
+id: ports
+title: Ports and capabilities
+description: Reference for the AuthProvider port, the optional capability interfaces, their type guards, and UnsupportedCapabilityError.
+---
+
+# Ports and capabilities
+
+The interface every identity provider is adapted to, plus the optional capabilities an
+adapter may also implement.
+
+Application code should inject [`AuthService`](./auth-service.mdx) instead — it's the
+stable surface. These exports are for adapter authors and for library code sitting at
+the port.
+
+## `AuthProvider`
+
+```ts
+interface AuthProvider {
+  readonly authenticated: Signal<boolean>;
+  readonly claims: Signal<Claims | null>;
+  readonly roles: Signal<readonly string[]>;
+
+  init(): Promise<void>;
+  getToken(): Promise<string>;
+  login(options?: LoginOptions): Promise<void>;
+  logout(options?: LogoutOptions): Promise<void>;
+}
+```
+
+Deliberately small: this is the entire surface the core, the guard and the interceptor
+are allowed to depend on. Anything a provider offers beyond it is expressed as an
+optional capability, so no adapter ever fakes a method it doesn't have.
+
+| Member          | Contract                                                                                                                         |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `authenticated` | `true` only when a valid session exists. Derive it from `claims`, don't track it separately                                      |
+| `claims`        | Decoded access-token payload; `null` when unauthenticated                                                                        |
+| `roles`         | Already normalised to strings. **Never `null`** — `[]` when there are none                                                       |
+| `init()`        | Called once by `provideAuth()`. Must be safe on a non-browser platform, where it should no-op and leave the user unauthenticated |
+| `getToken()`    | A token valid _now_, refreshed first if near expiry. Throws when the user must re-authenticate                                   |
+| `login()`       | Send the user to the provider's login page                                                                                       |
+| `logout()`      | Terminate the session                                                                                                            |
+
+Two invariants shape the whole design.
+
+**State is signals, operations are promises.** The line is state versus action — a
+token refresh is an action, not a piece of state.
+
+**Role normalisation belongs to the adapter.** Providers disagree about where roles
+live: Keycloak splits them across `realm_access` and `resource_access`, Auth0 uses a
+namespaced custom claim, Cognito uses `cognito:groups`, Entra ID uses `roles` or group
+GUIDs. The adapter resolves that; the core only ever sees `string[]`.
+
+See [Writing a custom provider](../guides/custom-provider.mdx) for a worked example.
+
+## Capability interfaces
+
+Optional interfaces an `AuthProvider` may also implement. The core feature-detects
+them, and `AuthService` exposes a matching `can*` signal so applications can hide UI
+they cannot deliver.
+
+These exist so the port stays honest. Folding every provider's features into
+`AuthProvider` would force adapters to stub methods they can't support — which is how
+multi-provider abstractions decay into a lowest common denominator plus a
+`getNativeClient()` escape hatch.
+
+### `SupportsRegistration`
+
+```ts
+interface SupportsRegistration {
+  register(options?: RegisterOptions): Promise<void>;
+}
+```
+
+Provider can send the user to a hosted sign-up flow.
+
+### `SupportsAccountManagement`
+
+```ts
+interface SupportsAccountManagement {
+  accountManagement(): Promise<void>;
+}
+```
+
+Provider hosts a self-service account console.
+
+### `SupportsPasswordUpdate`
+
+```ts
+interface SupportsPasswordUpdate {
+  updatePassword(options?: UpdatePasswordOptions): Promise<void>;
+}
+```
+
+Provider hosts a password-change flow.
+
+### `SupportsProfile`
+
+```ts
+interface SupportsProfile {
+  readonly profile: Signal<UserProfile | null>;
+  loadProfile(): Promise<UserProfile>;
+}
+```
+
+Provider can fetch a user profile beyond what the token carries. Both members are
+required: `loadProfile()` is what's detected, `profile` is what `AuthService`
+re-exposes.
+
+## Type guards
+
+Each capability has a narrowing guard, all of which test for the presence of the
+method:
+
+```ts
+function supportsRegistration(p: AuthProvider): p is AuthProvider & SupportsRegistration;
+function supportsAccountManagement(p: AuthProvider): p is AuthProvider & SupportsAccountManagement;
+function supportsPasswordUpdate(p: AuthProvider): p is AuthProvider & SupportsPasswordUpdate;
+function supportsProfile(p: AuthProvider): p is AuthProvider & SupportsProfile;
+```
+
+```ts
+const provider = inject(AUTH_PROVIDER);
+
+if (supportsProfile(provider)) {
+  await provider.loadProfile(); // narrowed — type-checks here
+}
+```
+
+`AuthService.canRegister()` and friends are `computed()` wrappers around these.
+
+:::warning[Detection is by method presence]
+**Omit what you can't support** — never implement a capability as a throwing stub. A
+stub makes `canRegister()` report `true` and puts a button in the UI that fails when
+clicked, which is the exact failure mode capabilities exist to prevent.
+:::
+
+## `UnsupportedCapabilityError`
+
+```ts
+class UnsupportedCapabilityError extends Error {
+  readonly capability: string;
+}
+```
+
+Thrown — as a rejected promise — when an application calls a capability the configured
+adapter doesn't implement.
+
+```ts
+try {
+  await auth.register();
+} catch (error) {
+  if (error instanceof UnsupportedCapabilityError) {
+    console.warn(error.capability); // 'registration'
+  }
+}
+```
+
+| `capability` value    | Method                |
+| --------------------- | --------------------- |
+| `'registration'`      | `register()`          |
+| `'accountManagement'` | `accountManagement()` |
+| `'passwordUpdate'`    | `updatePassword()`    |
+| `'profile'`           | `loadProfile()`       |
+
+The message names the `can*` signal to check first. Guarding the call avoids the error
+entirely.
+
+## Next
+
+- [Writing a custom provider](../guides/custom-provider.mdx) — implementing all of this
+- [Capabilities](../guides/capabilities.mdx) — using them from an application
+- [`AuthService`](./auth-service.mdx#capabilities) — the `can*` signals

@@ -1,0 +1,297 @@
+---
+id: keycloak
+title: Keycloak adapter
+description: Configure withKeycloak() — realm setup, silent SSO, PKCE, token refresh, and mapping Keycloak realm and client roles to a flat role list.
+---
+
+# Keycloak adapter
+
+`withKeycloak()` adapts Keycloak to the [`AuthProvider`
+port](../api/ports.mdx) and returns a feature you pass to `provideAuth()`.
+
+```ts
+import { provideAuth } from '@ismailza/ngx-auth-client';
+import { withKeycloak } from '@ismailza/ngx-auth-client/keycloak';
+
+provideAuth(
+  withKeycloak({
+    url: 'https://auth.example.com',
+    realm: 'my-realm',
+    clientId: 'my-app',
+  }),
+);
+```
+
+Three required values; everything else is defaulted.
+
+:::info[Built on `keycloak-js` directly]
+Not on `keycloak-angular`, which version-locks to a single Angular major. Owning
+the Angular integration is what lets this package support Angular 17–22 from one
+release. `keycloak-js` is an optional peer dependency (`>=25.0.0 <27.0.0`).
+:::
+
+## Defaults
+
+| Option             | Default                           | Effect                                                  |
+| ------------------ | --------------------------------- | ------------------------------------------------------- |
+| `onLoad`           | `'check-sso'`                     | Restore an existing session silently, don't force login |
+| `pkceMethod`       | `'S256'`                          | PKCE on, with SHA-256                                   |
+| `checkLoginIframe` | `false`                           | No hidden session-polling iframe                        |
+| `minTokenValidity` | `30`                              | Refresh when under 30 seconds of validity remain        |
+| `roles`            | `{ realm: true, resource: true }` | Read roles from both realm and all clients              |
+
+Two of these deserve a note.
+
+**PKCE is on by default and can't be disabled by omission.** Forgetting an option
+should never weaken a security control, so the default is the secure value rather
+than the library's absence of an opinion.
+
+**`checkLoginIframe` is off.** The iframe polls Keycloak for session status, which
+breaks under third-party-cookie restrictions in modern browsers and produces
+console noise. Token refresh plus `onTokenExpired` covers the same ground without
+it. Turn it on only if you specifically need cross-tab logout detection and have
+verified it works in your browser targets.
+
+## Configuration reference
+
+| Option                      | Type                                    | Default            |
+| --------------------------- | --------------------------------------- | ------------------ |
+| `url`                       | `string`                                | **required**       |
+| `realm`                     | `string`                                | **required**       |
+| `clientId`                  | `string`                                | **required**       |
+| `redirectUri`               | `string`                                | current page       |
+| `postLogoutRedirectUri`     | `string`                                | Keycloak's default |
+| `onLoad`                    | `'check-sso' \| 'login-required'`       | `'check-sso'`      |
+| `checkLoginIframe`          | `boolean`                               | `false`            |
+| `silentCheckSsoRedirectUri` | `string`                                | —                  |
+| `pkceMethod`                | `'S256' \| false`                       | `'S256'`           |
+| `enableLogging`             | `boolean`                               | `false`            |
+| `minTokenValidity`          | `number` (seconds)                      | `30`               |
+| `roles`                     | `KeycloakRoleSources`                   | both sources       |
+| `mapRoles`                  | `(claims: Claims) => readonly string[]` | —                  |
+
+:::note[Explicit `undefined` doesn't erase a default]
+`withKeycloak()` strips `undefined` values before merging, so
+`{ pkceMethod: maybeUndefined }` keeps `'S256'` rather than turning PKCE off. This
+matters when you build the config object from optional environment values.
+:::
+
+## Realm setup
+
+On the Keycloak side you need a **public** client (no client secret — a browser
+application cannot keep one):
+
+| Setting                         | Value                                                         |
+| ------------------------------- | ------------------------------------------------------------- |
+| Client authentication           | **Off** (public client)                                       |
+| Standard flow                   | **Enabled**                                                   |
+| Valid redirect URIs             | `https://app.example.com/*` (and your dev origin)             |
+| Valid post logout redirect URIs | `https://app.example.com/*`                                   |
+| Web origins                     | `https://app.example.com` — or `+` to reuse the redirect URIs |
+
+`url` is the server root. On Keycloak 17+ there is no `/auth` suffix:
+
+```ts
+url: 'https://auth.example.com'; // ✓ Keycloak 17+
+url: 'https://auth.example.com/auth'; // legacy layout only
+```
+
+:::warning[Don't use a wildcard for Web origins]
+Setting Web origins to `*` allows any site to make credentialed cross-origin calls
+to Keycloak's endpoints. List your real origins.
+:::
+
+## Load behaviour
+
+### `check-sso` — the default
+
+The adapter asks Keycloak whether a session already exists. If one does, the user
+is authenticated silently; if not, they stay anonymous and your public pages render
+normally.
+
+This is the right default: it lets an application have public and private areas
+without forcing every visitor through a login page.
+
+### `login-required`
+
+Redirects to the login page immediately when no session exists.
+
+```ts
+withKeycloak({ url, realm, clientId, onLoad: 'login-required' });
+```
+
+Use it only for applications with no public surface at all. The trade-off is that
+every cold visit costs a redirect round-trip before anything renders — and an
+anonymous user can never see so much as an error page.
+
+Prefer `check-sso` plus `authGuard`, which pushes the login redirect to the moment
+it's actually needed.
+
+### Silent `check-sso`
+
+By default `check-sso` performs its check by redirecting the top-level page to
+Keycloak and back, which shows a brief flash on first load. A static "silent check"
+page moves that into a hidden iframe:
+
+```html title="public/silent-check-sso.html"
+<!doctype html>
+<html>
+  <body>
+    <script>
+      parent.postMessage(location.href, location.origin);
+    </script>
+  </body>
+</html>
+```
+
+```ts
+withKeycloak({
+  url,
+  realm,
+  clientId,
+  silentCheckSsoRedirectUri: `${globalThis.location.origin}/silent-check-sso.html`,
+});
+```
+
+Add that URL to the client's valid redirect URIs.
+
+:::warning[Third-party cookies]
+Silent `check-sso` needs Keycloak's cookie to be readable from an iframe on your
+origin. Browsers that block third-party cookies — Safari by default, Chrome
+increasingly — will fail the silent check and report the user as unauthenticated
+even when a session exists.
+
+Keycloak's own guidance is to skip silent check-sso in that situation and accept
+the redirect. If your Keycloak is on a subdomain of your application's domain, the
+cookie is first-party and the problem doesn't arise.
+:::
+
+## Role sources
+
+Keycloak stores roles in two places, and which of them your application means by
+"the user's roles" is a deployment decision:
+
+```json
+{
+  "realm_access": { "roles": ["offline_access", "user"] },
+  "resource_access": {
+    "my-app": { "roles": ["admin"] },
+    "other-app": { "roles": ["viewer"] }
+  }
+}
+```
+
+`roles` selects the sources; the adapter flattens and de-duplicates them into the
+`string[]` that `AuthService.roles()` exposes.
+
+| Configuration                               | Resulting roles                             |
+| ------------------------------------------- | ------------------------------------------- |
+| `{ realm: true, resource: true }` (default) | `offline_access`, `user`, `admin`, `viewer` |
+| `{ realm: true, resource: ['my-app'] }`     | `offline_access`, `user`, `admin`           |
+| `{ realm: false, resource: ['my-app'] }`    | `admin`                                     |
+| `{ realm: true, resource: false }`          | `offline_access`, `user`                    |
+
+:::tip[Name your clients explicitly]
+`resource: true` takes roles from _every_ client in the token. If two clients
+define a role with the same name — `admin` in `my-app` and `admin` in an
+unrelated internal tool — a user who holds it in either one passes your check.
+
+`resource: ['my-app']` is the safer choice for anything beyond a single-client
+realm.
+:::
+
+### Custom role extraction
+
+When roles live somewhere non-standard — a group claim, a mapper output, a custom
+attribute — replace the extraction entirely. `mapRoles` takes precedence over
+`roles`:
+
+```ts
+withKeycloak({
+  url,
+  realm,
+  clientId,
+  mapRoles: (claims) => (claims['groups'] as string[] | undefined) ?? [],
+});
+```
+
+Return a `string[]`. The function runs inside a `computed()` on every claims
+change, so keep it cheap and side-effect free.
+
+```ts
+// Combining a group claim with realm roles.
+mapRoles: (claims) => [
+  ...((claims['realm_access'] as { roles?: string[] } | undefined)?.roles ?? []),
+  ...((claims['groups'] as string[] | undefined) ?? []).map((g) => g.replace(/^\//, '')),
+];
+```
+
+:::note[Malformed claims yield no roles, never a crash]
+Role extraction treats every claim as untrusted shape. A token from a
+misconfigured mapper — `realm_access` as a string, `roles` as an object, numbers
+in the array — produces an empty or filtered list rather than throwing inside a
+route guard. A `mapRoles` function you write yourself should be equally defensive.
+:::
+
+## Token refresh
+
+`keycloak-js` holds the tokens in memory and the adapter refreshes them in two
+places:
+
+- **Before use.** `getToken()` calls `updateToken(minTokenValidity)`, which
+  refreshes only if the token expires within that window and otherwise resolves
+  immediately without a network call.
+- **On expiry.** Keycloak's `onTokenExpired` callback triggers a refresh. If it
+  fails, `onAuthLogout` fires and the state clears — so `authenticated()` goes
+  `false` and your UI reacts.
+
+Raise `minTokenValidity` if your requests are slow enough that a token valid for 30
+seconds might expire mid-flight:
+
+```ts
+withKeycloak({ url, realm, clientId, minTokenValidity: 60 });
+```
+
+State changes reach your signals through the adapter's event handlers
+(`onAuthSuccess`, `onAuthRefreshSuccess`, `onAuthError`, `onAuthRefreshError`,
+`onAuthLogout`). That translation happens in exactly one place, so nothing
+downstream subscribes to Keycloak events.
+
+## Escaping to `keycloak-js`
+
+For genuinely Keycloak-specific work that has no meaning in a provider-agnostic
+port — authorisation-policy evaluation, custom required actions — inject the
+instance:
+
+```ts
+import { KEYCLOAK_INSTANCE } from '@ismailza/ngx-auth-client/keycloak';
+
+@Injectable({ providedIn: 'root' })
+export class PolicyService {
+  private readonly keycloak = inject(KEYCLOAK_INSTANCE);
+
+  hasPermission(resource: string): boolean {
+    // `null` on a non-browser platform.
+    return this.keycloak?.hasResourceRole(resource, 'my-app') ?? false;
+  }
+}
+```
+
+This couples that file to Keycloak, which is the point — the coupling stays
+visible and local instead of being smuggled into `AuthService`. Check for `null`:
+the instance is never constructed on the server.
+
+## Logging
+
+`enableLogging: true` makes `keycloak-js` log its lifecycle to the console.
+Useful when a redirect loop or a failing silent check needs diagnosing:
+
+```ts
+withKeycloak({ url, realm, clientId, enableLogging: !environment.production });
+```
+
+## Next
+
+- [Capabilities](./capabilities.mdx) — sign-up, account console, password change, profile
+- [Configuration](./configuration.mdx) — the provider-agnostic half
+- [`withKeycloak()` reference](../api/keycloak.mdx)
