@@ -5,6 +5,8 @@
     "ng": "ng",
     "start": "ng serve",
     "build": "ng build",
+    "postbuild": "node scripts/stage-package-files.mjs",
+    "verify:package": "node scripts/verify-package.mjs",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
     "compat": "node scripts/check-angular-compat.mjs",
