@@ -94,6 +94,34 @@ That's the complete setup for the common case. Everything else is defaulted: `ch
 
 → [Quick start guide](https://ismailza.github.io/ngx-auth-client/docs/getting-started/quick-start)
 
+## Using your own backend
+
+No Keycloak? `withHttpAuth()` adapts a backend you run yourself. Your app shows its own login form, and the backend issues a JWT access token plus a refresh token in an `httpOnly` cookie:
+
+```ts
+import { withHttpAuth } from '@ismailza/ngx-auth-client/http';
+
+provideAuth(
+  withHttpAuth({
+    endpoints: {
+      signIn: '/api/auth/login',
+      refresh: '/api/auth/refresh',
+      logout: '/api/auth/logout',
+    },
+  }),
+);
+```
+
+```ts
+// login page
+await auth.signIn({ username, password }); // rejects with InvalidCredentialsError on 401
+await router.navigateByUrl(sanitizeReturnUrl(route.snapshot.queryParamMap.get('returnUrl')));
+```
+
+The access token stays in memory, the session survives reloads through the cookie, and concurrent requests share a single refresh. No extra dependency.
+
+→ [Your own backend](https://ismailza.github.io/ngx-auth-client/docs/guides/http-backend)
+
 ## Reading auth state
 
 `AuthService` is the only thing your components inject. Every piece of state on it is a signal, so templates update on login, logout and token refresh.
@@ -175,6 +203,7 @@ Client-side role checks are UX, not authorisation — enforce every rule that ma
 | ------------------------------------ | -------------------------------------------------------------------- |
 | `@ismailza/ngx-auth-client`          | `provideAuth`, `AuthService`, `authGuard`, the interceptor, the port |
 | `@ismailza/ngx-auth-client/keycloak` | `withKeycloak`, Keycloak configuration and tokens                    |
+| `@ismailza/ngx-auth-client/http`     | `withHttpAuth` for your own backend, `sanitizeReturnUrl`             |
 | `@ismailza/ngx-auth-client/testing`  | `withFakeAuth`, `FakeAuthProvider`                                   |
 
 Nothing in the core imports `keycloak-js`, so an application shipping its own adapter never pulls it into the bundle.
@@ -183,7 +212,7 @@ Nothing in the core imports `keycloak-js`, so an application shipping its own ad
 
 Supports **Angular 17 – 22** (`>=17.0.0 <23.0.0`). Signals-based state requires Angular 17+; zoneless is supported but not required.
 
-Every release is verified against each supported major in CI — the packed tarball is type-checked with `ngc`, bundled through a production `ng build` (which runs the Angular linker over the shipped declarations) and executed in Node, for all three entry points.
+Every release is verified against each supported major in CI — the packed tarball is type-checked with `ngc`, bundled through a production `ng build` (which runs the Angular linker over the shipped declarations) and executed in Node, for all four entry points.
 
 ## Documentation
 
@@ -191,7 +220,7 @@ Full documentation is at **[ismailza.github.io/ngx-auth-client](https://ismailza
 
 - [Introduction](https://ismailza.github.io/ngx-auth-client/docs/intro) — what it is and what it deliberately isn't
 - [Installation](https://ismailza.github.io/ngx-auth-client/docs/getting-started/installation) · [Quick start](https://ismailza.github.io/ngx-auth-client/docs/getting-started/quick-start)
-- [Configuration](https://ismailza.github.io/ngx-auth-client/docs/guides/configuration) · [Keycloak adapter](https://ismailza.github.io/ngx-auth-client/docs/guides/keycloak) · [Capabilities](https://ismailza.github.io/ngx-auth-client/docs/guides/capabilities)
+- [Configuration](https://ismailza.github.io/ngx-auth-client/docs/guides/configuration) · [Keycloak adapter](https://ismailza.github.io/ngx-auth-client/docs/guides/keycloak) · [Your own backend](https://ismailza.github.io/ngx-auth-client/docs/guides/http-backend) · [Capabilities](https://ismailza.github.io/ngx-auth-client/docs/guides/capabilities)
 - [Server-side rendering](https://ismailza.github.io/ngx-auth-client/docs/guides/server-side-rendering) · [Writing a custom provider](https://ismailza.github.io/ngx-auth-client/docs/guides/custom-provider)
 - [API reference](https://ismailza.github.io/ngx-auth-client/docs/api/provide-auth)
 

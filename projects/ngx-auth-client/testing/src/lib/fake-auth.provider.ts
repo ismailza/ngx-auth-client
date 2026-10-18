@@ -2,16 +2,19 @@ import { Injectable, signal } from '@angular/core';
 import type {
   AuthProvider,
   Claims,
+  Credentials,
   LoginOptions,
   LogoutOptions,
   RegisterOptions,
   SupportsAccountManagement,
+  SupportsCredentialSignIn,
   SupportsPasswordUpdate,
   SupportsProfile,
   SupportsRegistration,
   UpdatePasswordOptions,
   UserProfile,
 } from '@ismailza/ngx-auth-client';
+import { InvalidCredentialsError } from '@ismailza/ngx-auth-client';
 
 /** Initial state for {@link FakeAuthProvider}. */
 export interface FakeAuthOptions {
@@ -48,6 +51,12 @@ export interface FakeAuthOptions {
    * Make `getToken()` reject, to exercise expired-session handling.
    */
   failToken?: Error;
+
+  /**
+   * Make `signIn()` reject. Pass `true` for an {@link InvalidCredentialsError},
+   * or an `Error` of your own to exercise a server failure.
+   */
+  failSignIn?: true | Error;
 }
 
 /** A call recorded by {@link FakeAuthProvider}. */
@@ -82,6 +91,7 @@ export interface RecordedCall<T> {
 export class FakeAuthProvider
   implements
     AuthProvider,
+    SupportsCredentialSignIn,
     SupportsRegistration,
     SupportsAccountManagement,
     SupportsPasswordUpdate,
@@ -105,6 +115,9 @@ export class FakeAuthProvider
 
   /** Every `login()` call, in order. */
   readonly loginCalls: RecordedCall<LoginOptions>[] = [];
+
+  /** Every `signIn()` call, in order. */
+  readonly signInCalls: RecordedCall<Credentials>[] = [];
 
   /** Every `logout()` call, in order. */
   readonly logoutCalls: RecordedCall<LogoutOptions>[] = [];
@@ -143,6 +156,24 @@ export class FakeAuthProvider
 
   login(options?: LoginOptions): Promise<void> {
     this.loginCalls.push({ options });
+    return Promise.resolve();
+  }
+
+  /**
+   * Records the call and signs the user in, keeping any claims and roles the
+   * fake was configured with.
+   */
+  signIn(credentials: Credentials): Promise<void> {
+    this.signInCalls.push({ options: credentials });
+    const failure = this.options.failSignIn;
+    if (failure !== undefined) {
+      return Promise.reject(
+        failure === true ? new InvalidCredentialsError() : failure,
+      );
+    }
+    this._authenticated.set(true);
+    this._claims.set(this.options.claims ?? null);
+    this._roles.set(this.options.roles ?? []);
     return Promise.resolve();
   }
 

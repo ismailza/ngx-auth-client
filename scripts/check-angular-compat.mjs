@@ -15,7 +15,7 @@
  *   3. `compat/smoke.mjs` runs — exercises that version's JIT compiler and
  *      injector, and the `exports` map, which no compile step reaches.
  *
- * All three entry points are covered: the core, `/keycloak` and `/testing`.
+ * All four entry points are covered: the core, `/keycloak`, `/http` and `/testing`.
  *
  * The matrix is derived from the library's `peerDependencies`, so widening the
  * supported range is a one-line change in one file.
@@ -273,6 +273,9 @@ const assertBundleLinked = (workDir) => {
   }
   if (!code.includes('KEYCLOAK_CONFIG')) {
     throw new Error('Bundle contains no trace of the /keycloak entry point.');
+  }
+  if (!code.includes('HTTP_AUTH_CONFIG')) {
+    throw new Error('Bundle contains no trace of the /http entry point.');
   }
 };
 

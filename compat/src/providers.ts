@@ -5,10 +5,12 @@ import {
   AUTH_CONFIG,
   AUTH_PROVIDER,
   authTokenInterceptor,
+  InvalidCredentialsError,
   provideAuth,
   UnsupportedCapabilityError,
   type AuthConfiguration,
   type BearerTokenConfiguration,
+  type Credentials,
   type HttpMethod,
   type LoginOptions,
   type LogoutOptions,
@@ -23,6 +25,17 @@ import {
   type KeycloakConfiguration,
   type KeycloakRoleSources,
 } from '@ismailza/ngx-auth-client/keycloak';
+import {
+  HTTP_AUTH_CONFIG,
+  HttpAuthProvider,
+  ProfileHttpAuthProvider,
+  sanitizeReturnUrl,
+  withHttpAuth,
+  type HttpAuthConfiguration,
+  type HttpAuthSessionChange,
+  type HttpAuthTokenResponse,
+  type HttpAuthXsrfConfiguration,
+} from '@ismailza/ngx-auth-client/http';
 import { withFixtureAuth } from './adapter';
 import { routes } from './routes';
 
@@ -80,6 +93,50 @@ export const mappedRolesConfig: ApplicationConfig = {
   ],
 };
 
+const httpAuthConfiguration: HttpAuthConfiguration = {
+  endpoints: {
+    signIn: '/api/auth/login',
+    refresh: '/api/auth/refresh',
+    logout: '/api/auth/logout',
+    profile: '/api/auth/me',
+  },
+  loginRoute: '/login',
+  returnUrlParam: 'returnUrl',
+  postLogoutRoute: '/',
+  withCredentials: true,
+  minTokenValidity: 45,
+  rejectionStatuses: [400, 401],
+  xsrf: { cookieName: 'XSRF-TOKEN', headerName: 'X-XSRF-TOKEN' },
+  headers: { 'X-Client': 'compat' },
+  mapTokenResponse: (body): HttpAuthTokenResponse => {
+    const { token, ttl } = body as { token: string; ttl: number };
+    return { accessToken: token, expiresIn: ttl };
+  },
+  mapRoles: (claims) => {
+    const authorities = claims['authorities'];
+    return Array.isArray(authorities) ? authorities.filter((a): a is string => typeof a === 'string') : [];
+  },
+  mapProfile: (body) => ({ id: (body as { id?: string }).id }),
+};
+
+/** The homemade-backend setup — the `/http` entry point. */
+export const httpAuthConfig: ApplicationConfig = {
+  providers: [
+    provideAuth(withHttpAuth(httpAuthConfiguration), authConfig),
+    provideHttpClient(withInterceptors([authTokenInterceptor])),
+    provideRouter(routes),
+  ],
+};
+
+/** Public types of the `/http` entry point stay importable. */
+export const httpTypeShapes = {
+  xsrfOff: false satisfies HttpAuthXsrfConfiguration | false,
+  reasons: ['signIn', 'refresh', 'logout', 'expired'] satisfies HttpAuthSessionChange[],
+};
+
+/** A login page reads its return URL through the sanitiser. */
+export const loginReturnUrl = (query: string | null): string => sanitizeReturnUrl(query, '/home');
+
 /** A third-party adapter has to compose the same way the shipped ones do. */
 export const fixtureAdapterConfig: ApplicationConfig = {
   providers: [provideAuth(withFixtureAuth(), { forbiddenRoute: null, bearer: false })],
@@ -91,6 +148,7 @@ export const optionShapes = {
   logout: { redirectUri: '/bye' } satisfies LogoutOptions,
   register: { redirectUri: '/welcome' } satisfies RegisterOptions,
   updatePassword: { redirectUri: '/settings', locale: 'en' } satisfies UpdatePasswordOptions,
+  credentials: { username: 'tester', password: 'secret', otp: '123456' } satisfies Credentials,
 };
 
 /** DI tokens and classes are public surface — removals must break the build. */
@@ -100,5 +158,9 @@ export const publicSymbols = [
   KEYCLOAK_CONFIG,
   KEYCLOAK_INSTANCE,
   KeycloakAuthProvider,
+  HTTP_AUTH_CONFIG,
+  HttpAuthProvider,
+  ProfileHttpAuthProvider,
   UnsupportedCapabilityError,
+  InvalidCredentialsError,
 ] as const;

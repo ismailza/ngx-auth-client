@@ -30,6 +30,7 @@
             "tsConfig": "projects/ngx-auth-client/tsconfig.spec.json",
             "include": [
               "**/*.spec.ts",
+              "../http/**/*.spec.ts",
               "../keycloak/**/*.spec.ts",
               "../testing/**/*.spec.ts"
             ]

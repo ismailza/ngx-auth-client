@@ -9,6 +9,6 @@
     "declarationMap": true,
     "types": []
   },
-  "include": ["src/**/*.ts", "keycloak/**/*.ts", "testing/**/*.ts"],
+  "include": ["src/**/*.ts", "http/**/*.ts", "keycloak/**/*.ts", "testing/**/*.ts"],
   "exclude": ["**/*.spec.ts"]
 }

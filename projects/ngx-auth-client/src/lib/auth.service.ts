@@ -1,6 +1,7 @@
 import { computed, inject, Injectable, signal, Signal } from '@angular/core';
 import { AUTH_PROVIDER } from './auth.tokens';
 import {
+  Credentials,
   LoginOptions,
   LogoutOptions,
   RegisterOptions,
@@ -9,6 +10,7 @@ import {
 import { Claims, UserProfile } from './models/claims.model';
 import {
   supportsAccountManagement,
+  supportsCredentialSignIn,
   supportsPasswordUpdate,
   supportsProfile,
   supportsRegistration,
@@ -81,6 +83,9 @@ export class AuthService {
   /** The error that failed initialisation, if any. */
   readonly initError = this._initError.asReadonly();
 
+  /** Whether the adapter supports {@link signIn}. */
+  readonly canSignIn = computed(() => supportsCredentialSignIn(this.provider));
+
   /** Whether the adapter supports {@link register}. */
   readonly canRegister = computed(() => supportsRegistration(this.provider));
 
@@ -122,6 +127,19 @@ export class AuthService {
   /** Sends the user to the provider's login page. */
   login(options?: LoginOptions): Promise<void> {
     return this.provider.login(options);
+  }
+
+  /**
+   * Authenticates credentials from the application's own login form.
+   *
+   * @throws {UnsupportedCapabilityError} When {@link canSignIn} is `false`.
+   * @throws {InvalidCredentialsError} When the credentials are rejected.
+   */
+  signIn(credentials: Credentials): Promise<void> {
+    if (!supportsCredentialSignIn(this.provider)) {
+      return Promise.reject(new UnsupportedCapabilityError('signIn'));
+    }
+    return this.provider.signIn(credentials);
   }
 
   /** Terminates the session. */

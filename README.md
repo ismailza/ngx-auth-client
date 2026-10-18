@@ -28,7 +28,7 @@
 
 A reactive authentication layer for Angular applications. Exposes auth state as **signals**, protects routes with a **functional guard**, and keeps your feature code free of any identity-provider imports.
 
-Ships with a Keycloak adapter. Built on a provider-agnostic port, so additional adapters can be added without touching application code.
+Ships with a Keycloak adapter and an HTTP adapter for your own backend. Built on a provider-agnostic port, so additional adapters can be added without touching application code.
 
 ```ts
 bootstrapApplication(App, {
@@ -114,6 +114,34 @@ export const appConfig: ApplicationConfig = {
 That's the complete setup for the common case. Everything else is defaulted: `check-sso` on load, PKCE `S256`, automatic token refresh, bearer token attached to same-origin `/api/*` requests.
 
 → [Quick start](https://ismailza.github.io/ngx-auth-client/docs/getting-started/quick-start) · [every `provideAuth()` option](https://ismailza.github.io/ngx-auth-client/docs/guides/configuration)
+
+## Using your own backend
+
+No Keycloak? `withHttpAuth()` adapts a backend you run yourself. Your app shows its own login form, and the backend issues a JWT access token plus a refresh token in an `httpOnly` cookie:
+
+```ts
+import { withHttpAuth } from '@ismailza/ngx-auth-client/http';
+
+provideAuth(
+  withHttpAuth({
+    endpoints: {
+      signIn: '/api/auth/login',
+      refresh: '/api/auth/refresh',
+      logout: '/api/auth/logout',
+    },
+  }),
+);
+```
+
+```ts
+// login page
+await auth.signIn({ username, password }); // rejects with InvalidCredentialsError on 401
+await router.navigateByUrl(sanitizeReturnUrl(route.snapshot.queryParamMap.get('returnUrl')));
+```
+
+The access token stays in memory, the session survives reloads through the cookie, and concurrent requests share a single refresh. No extra dependency.
+
+→ [Your own backend](https://ismailza.github.io/ngx-auth-client/docs/guides/http-backend)
 
 ## Reading auth state
 
@@ -310,7 +338,7 @@ Full documentation is at **[ismailza.github.io/ngx-auth-client](https://ismailza
 | Section | Pages |
 | ------- | ----- |
 | **Getting started** | [Installation](https://ismailza.github.io/ngx-auth-client/docs/getting-started/installation) · [Quick start](https://ismailza.github.io/ngx-auth-client/docs/getting-started/quick-start) |
-| **Guides** | [Configuration](https://ismailza.github.io/ngx-auth-client/docs/guides/configuration) · [Reading auth state](https://ismailza.github.io/ngx-auth-client/docs/guides/auth-state) · [Protecting routes](https://ismailza.github.io/ngx-auth-client/docs/guides/route-protection) · [Attaching tokens](https://ismailza.github.io/ngx-auth-client/docs/guides/attaching-tokens) · [Keycloak adapter](https://ismailza.github.io/ngx-auth-client/docs/guides/keycloak) · [Capabilities](https://ismailza.github.io/ngx-auth-client/docs/guides/capabilities) · [Server-side rendering](https://ismailza.github.io/ngx-auth-client/docs/guides/server-side-rendering) · [Testing](https://ismailza.github.io/ngx-auth-client/docs/guides/testing) · [Custom provider](https://ismailza.github.io/ngx-auth-client/docs/guides/custom-provider) · [Security](https://ismailza.github.io/ngx-auth-client/docs/guides/security) |
+| **Guides** | [Configuration](https://ismailza.github.io/ngx-auth-client/docs/guides/configuration) · [Reading auth state](https://ismailza.github.io/ngx-auth-client/docs/guides/auth-state) · [Protecting routes](https://ismailza.github.io/ngx-auth-client/docs/guides/route-protection) · [Attaching tokens](https://ismailza.github.io/ngx-auth-client/docs/guides/attaching-tokens) · [Keycloak adapter](https://ismailza.github.io/ngx-auth-client/docs/guides/keycloak) · [Your own backend](https://ismailza.github.io/ngx-auth-client/docs/guides/http-backend) · [Capabilities](https://ismailza.github.io/ngx-auth-client/docs/guides/capabilities) · [Server-side rendering](https://ismailza.github.io/ngx-auth-client/docs/guides/server-side-rendering) · [Testing](https://ismailza.github.io/ngx-auth-client/docs/guides/testing) · [Custom provider](https://ismailza.github.io/ngx-auth-client/docs/guides/custom-provider) · [Security](https://ismailza.github.io/ngx-auth-client/docs/guides/security) |
 | **API reference** | [`provideAuth()`](https://ismailza.github.io/ngx-auth-client/docs/api/provide-auth) · [`AuthService`](https://ismailza.github.io/ngx-auth-client/docs/api/auth-service) · [`authGuard`](https://ismailza.github.io/ngx-auth-client/docs/api/guards) · [`authTokenInterceptor`](https://ismailza.github.io/ngx-auth-client/docs/api/interceptors) · [Keycloak entry point](https://ismailza.github.io/ngx-auth-client/docs/api/keycloak) · [Testing entry point](https://ismailza.github.io/ngx-auth-client/docs/api/testing) · [Ports](https://ismailza.github.io/ngx-auth-client/docs/api/ports) · [Models](https://ismailza.github.io/ngx-auth-client/docs/api/models) · [Injection tokens](https://ismailza.github.io/ngx-auth-client/docs/api/tokens) |
 
 The site is built from [`website/`](./website) and deploys on every push to `main`.
@@ -318,6 +346,7 @@ The site is built from [`website/`](./website) and deploys on every push to `mai
 ## Roadmap
 
 - [x] Keycloak adapter
+- [x] HTTP adapter for your own backend
 - [ ] Generic OIDC adapter (`oidc-client-ts`)
 - [ ] Auth0 adapter
 - [ ] Route-level scope requirements
