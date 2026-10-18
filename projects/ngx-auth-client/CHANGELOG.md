@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/ismailza/ngx-auth-client/compare/v0.1.1...v0.2.0) (2026-10-18)
+
+
+### Features
+
+* **http:** add an HTTP adapter for self-hosted auth backends ([0916284](https://github.com/ismailza/ngx-auth-client/commit/0916284d980b0e6b1f0ddc7b17cb1822650e28f5)), closes [#11](https://github.com/ismailza/ngx-auth-client/issues/11)
+
+
+### Bug Fixes
+
+* **core:** name the real can*() signal in UnsupportedCapabilityError ([938b0e3](https://github.com/ismailza/ngx-auth-client/commit/938b0e3d797c165f86ff547439faa206b5ba8c36))
+
 ## [0.1.1](https://github.com/ismailza/ngx-auth-client/compare/v0.1.0...v0.1.1) (2026-08-08)
 
 
