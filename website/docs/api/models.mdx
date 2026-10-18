@@ -129,6 +129,19 @@ interface UpdatePasswordOptions {
 `redirectUri` defaults to the **current page** — a password change happens mid-session,
 so returning the user to the app root would be surprising.
 
+## `Credentials`
+
+```ts
+interface Credentials {
+  readonly username: string;
+  readonly password: string;
+  readonly [field: string]: unknown;
+}
+```
+
+What `AuthService.signIn()` takes. Extra fields — a one-time code, a tenant — are
+forwarded to the backend as-is.
+
 ## `AuthConfiguration`
 
 The second argument to `provideAuth()`.
@@ -266,5 +279,7 @@ An adapter packaged for `provideAuth()`. See [`provideAuth()`](./provide-auth.md
 | `KeycloakConfiguration`            | [`/keycloak`](./keycloak.mdx)   |
 | `KeycloakRoleSources`              | [`/keycloak`](./keycloak.mdx)   |
 | `ResolvedKeycloakConfiguration`    | [`/keycloak`](./keycloak.mdx)   |
+| `HttpAuthConfiguration`            | [`/http`](./http.mdx)           |
+| `HttpAuthTokenResponse`            | [`/http`](./http.mdx)           |
 | `FakeAuthOptions`                  | [`/testing`](./testing.mdx)     |
 | `RecordedCall<T>`                  | [`/testing`](./testing.mdx)     |

@@ -31,7 +31,7 @@ consumer application and runs three checks:
   the partial declarations the package ships;
 - a **runtime test** of the injector and the `exports` map.
 
-All three entry points — the core, `/keycloak` and `/testing` — are covered. The
+All four entry points — the core, `/keycloak`, `/http` and `/testing` — are covered. The
 upper bound is deliberate: a new Angular major is added only once it has been
 validated.
 :::
@@ -63,17 +63,18 @@ yarn add @ismailza/ngx-auth-client keycloak-js
 </Tabs>
 
 `keycloak-js` is an **optional** peer dependency. Install it if you use the
-Keycloak adapter; omit it if you only use the fake adapter in tests or ship your
-own.
+Keycloak adapter; omit it if you use the [HTTP adapter](../guides/http-backend.mdx)
+for your own backend, only use the fake adapter in tests, or ship your own.
 
 ## Entry points
 
-The package publishes three:
+The package publishes four:
 
 | Import path                          | Contains                                                             |
 | ------------------------------------ | -------------------------------------------------------------------- |
 | `@ismailza/ngx-auth-client`          | `provideAuth`, `AuthService`, `authGuard`, the interceptor, the port |
 | `@ismailza/ngx-auth-client/keycloak` | `withKeycloak`, Keycloak configuration and tokens                    |
+| `@ismailza/ngx-auth-client/http`     | `withHttpAuth` for your own backend, `sanitizeReturnUrl`             |
 | `@ismailza/ngx-auth-client/testing`  | `withFakeAuth`, `FakeAuthProvider`                                   |
 
 Nothing in the core imports `keycloak-js`, so an application that ships its own

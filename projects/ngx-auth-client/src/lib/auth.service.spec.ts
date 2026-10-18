@@ -5,7 +5,10 @@ import { AuthService } from './auth.service';
 import { AUTH_PROVIDER } from './auth.tokens';
 import { Claims } from './models/claims.model';
 import { AuthProvider } from './ports/auth-provider';
-import { UnsupportedCapabilityError } from './ports/capabilities';
+import {
+  InvalidCredentialsError,
+  UnsupportedCapabilityError,
+} from './ports/capabilities';
 import { AuthFeature, provideAuth } from './provide-auth';
 
 /**
@@ -141,6 +144,7 @@ describe('AuthService', () => {
       expect(auth.canManageAccount()).toBe(true);
       expect(auth.canUpdatePassword()).toBe(true);
       expect(auth.canLoadProfile()).toBe(true);
+      expect(auth.canSignIn()).toBe(true);
     });
 
     it('reports no capability on an adapter that implements only the port', () => {
@@ -150,6 +154,7 @@ describe('AuthService', () => {
       expect(auth.canManageAccount()).toBe(false);
       expect(auth.canUpdatePassword()).toBe(false);
       expect(auth.canLoadProfile()).toBe(false);
+      expect(auth.canSignIn()).toBe(false);
     });
 
     it('keeps the port itself working on a minimal adapter', async () => {
@@ -179,6 +184,15 @@ describe('AuthService', () => {
       await expect(auth.loadProfile()).rejects.toBeInstanceOf(
         UnsupportedCapabilityError,
       );
+      await expect(
+        auth.signIn({ username: 'u', password: 'p' }),
+      ).rejects.toBeInstanceOf(UnsupportedCapabilityError);
+    });
+
+    it('names the matching can* signal in UnsupportedCapabilityError', () => {
+      expect(new UnsupportedCapabilityError('signIn').message).toContain(
+        'AuthService.canSignIn()',
+      );
     });
   });
 
@@ -207,6 +221,29 @@ describe('AuthService', () => {
       await auth.loadProfile();
 
       expect(auth.profile()?.username).toBe('test');
+    });
+
+    it('signs in with credentials through the adapter', async () => {
+      const auth = setup(withFakeAuth({ roles: ['admin'] }));
+      const fake = TestBed.inject(FakeAuthProvider);
+
+      await auth.signIn({ username: 'tester', password: 'secret' });
+
+      expect(fake.signInCalls[0].options).toEqual({
+        username: 'tester',
+        password: 'secret',
+      });
+      expect(auth.authenticated()).toBe(true);
+      expect(auth.hasRole('admin')).toBe(true);
+    });
+
+    it('propagates rejected credentials', async () => {
+      const auth = setup(withFakeAuth({ failSignIn: true }));
+
+      await expect(
+        auth.signIn({ username: 'tester', password: 'wrong' }),
+      ).rejects.toBeInstanceOf(InvalidCredentialsError);
+      expect(auth.authenticated()).toBe(false);
     });
 
     it('propagates a failed token refresh', async () => {

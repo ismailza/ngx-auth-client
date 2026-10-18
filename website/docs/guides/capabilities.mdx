@@ -7,7 +7,7 @@ description: Optional provider features — registration, account console, passw
 # Capabilities
 
 Not every identity provider hosts a sign-up flow, a self-service account console
-or a password-change page. Four features are therefore **optional**: an adapter
+or a password-change page. Five features are therefore **optional**: an adapter
 implements them only if its provider genuinely offers them.
 
 | Capability      | Method                     | `AuthService` flag    |
@@ -16,9 +16,13 @@ implements them only if its provider genuinely offers them.
 | Account console | `accountManagement()`      | `canManageAccount()`  |
 | Password change | `updatePassword(options?)` | `canUpdatePassword()` |
 | Profile loading | `loadProfile()`            | `canLoadProfile()`    |
+| Credential sign-in | `signIn(credentials)`   | `canSignIn()`         |
 
-The Keycloak adapter implements all four. The [fake adapter](./testing.mdx) does
-too, so tests exercise the same branches.
+The Keycloak adapter implements the first four — sign-in happens on Keycloak's
+own page. The [HTTP adapter](./http-backend.mdx) is the reverse: it implements
+credential sign-in, and profile loading when a profile endpoint is configured.
+The [fake adapter](./testing.mdx) implements all five, so tests exercise every
+branch.
 
 ## Why not just put them on the port?
 

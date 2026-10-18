@@ -52,3 +52,16 @@ export interface UpdatePasswordOptions {
   /** Locale hint for the provider's hosted UI. */
   locale?: string;
 }
+
+/**
+ * Credentials for {@link SupportsCredentialSignIn.signIn}, collected by the
+ * application's own login form.
+ *
+ * `username` and `password` cover the common case; any extra field (a one-time
+ * code, a tenant, "remember me") is forwarded to the backend as-is.
+ */
+export interface Credentials {
+  readonly username: string;
+  readonly password: string;
+  readonly [field: string]: unknown;
+}

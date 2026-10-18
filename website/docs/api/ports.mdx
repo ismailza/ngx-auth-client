@@ -95,6 +95,20 @@ interface SupportsPasswordUpdate {
 
 Provider hosts a password-change flow.
 
+### `SupportsCredentialSignIn`
+
+```ts
+interface SupportsCredentialSignIn {
+  signIn(credentials: Credentials): Promise<void>;
+}
+```
+
+Provider authenticates credentials submitted by the application's own form instead
+of redirecting to a hosted login page. Such adapters usually implement `login()` as a
+navigation to the app's login route, where the form calls `signIn()`. Must reject
+with [`InvalidCredentialsError`](#invalidcredentialserror) when the credentials are
+refused.
+
 ### `SupportsProfile`
 
 ```ts
@@ -118,6 +132,7 @@ function supportsRegistration(p: AuthProvider): p is AuthProvider & SupportsRegi
 function supportsAccountManagement(p: AuthProvider): p is AuthProvider & SupportsAccountManagement;
 function supportsPasswordUpdate(p: AuthProvider): p is AuthProvider & SupportsPasswordUpdate;
 function supportsProfile(p: AuthProvider): p is AuthProvider & SupportsProfile;
+function supportsCredentialSignIn(p: AuthProvider): p is AuthProvider & SupportsCredentialSignIn;
 ```
 
 ```ts
@@ -163,9 +178,30 @@ try {
 | `'accountManagement'` | `accountManagement()` |
 | `'passwordUpdate'`    | `updatePassword()`    |
 | `'profile'`           | `loadProfile()`       |
+| `'signIn'`            | `signIn()`            |
 
 The message names the `can*` signal to check first. Guarding the call avoids the error
 entirely.
+
+## `InvalidCredentialsError`
+
+```ts
+class InvalidCredentialsError extends Error {
+  readonly cause?: unknown;
+}
+```
+
+Rejected by `signIn()` when the backend refuses the credentials. `cause` holds the
+underlying response. Kept apart from network and server failures, so a login form
+shows "wrong username or password" only when that is what happened.
+
+```ts
+try {
+  await auth.signIn({ username, password });
+} catch (error) {
+  message.set(error instanceof InvalidCredentialsError ? 'Wrong username or password.' : 'Try again later.');
+}
+```
 
 ## Next
 

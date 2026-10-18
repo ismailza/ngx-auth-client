@@ -1,5 +1,6 @@
 import { Signal } from '@angular/core';
 import {
+  Credentials,
   RegisterOptions,
   UpdatePasswordOptions,
 } from '../models/auth-options.model';
@@ -42,6 +43,28 @@ export interface SupportsProfile {
   loadProfile(): Promise<UserProfile>;
 }
 
+/**
+ * Provider authenticates credentials submitted by the application's own form,
+ * rather than redirecting to a hosted login page.
+ *
+ * Adapters with this capability typically implement `login()` as a navigation
+ * to the application's login route, where the form calls {@link signIn}.
+ */
+export interface SupportsCredentialSignIn {
+  /**
+   * Authenticates `credentials` and establishes the session.
+   *
+   * @throws {InvalidCredentialsError} When the backend rejects the credentials.
+   */
+  signIn(credentials: Credentials): Promise<void>;
+}
+
+/** Narrows to a provider that implements {@link SupportsCredentialSignIn}. */
+export const supportsCredentialSignIn = (
+  provider: AuthProvider,
+): provider is AuthProvider & SupportsCredentialSignIn =>
+  typeof (provider as Partial<SupportsCredentialSignIn>).signIn === 'function';
+
 /** Narrows to a provider that implements {@link SupportsRegistration}. */
 export const supportsRegistration = (
   provider: AuthProvider,
@@ -81,5 +104,19 @@ export class UnsupportedCapabilityError extends Error {
         `Check AuthService.can${capability.charAt(0).toUpperCase()}${capability.slice(1)}() before calling it.`,
     );
     this.name = 'UnsupportedCapabilityError';
+  }
+}
+
+/**
+ * Thrown by {@link SupportsCredentialSignIn.signIn} when the backend rejects
+ * the submitted credentials.
+ *
+ * Distinct from a network or server failure, so a login form can show "wrong
+ * username or password" only when that is what actually happened.
+ */
+export class InvalidCredentialsError extends Error {
+  constructor(override readonly cause?: unknown) {
+    super('The credentials were rejected.');
+    this.name = 'InvalidCredentialsError';
   }
 }

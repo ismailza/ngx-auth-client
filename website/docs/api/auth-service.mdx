@@ -31,10 +31,12 @@ predicates.
 | `canManageAccount`         | `Signal<boolean>`             |
 | `canUpdatePassword`        | `Signal<boolean>`             |
 | `canLoadProfile`           | `Signal<boolean>`             |
+| `canSignIn`                | `Signal<boolean>`             |
 | `whenReady()`              | `Promise<void>`               |
 | `getToken()`               | `Promise<string>`             |
 | `login(options?)`          | `Promise<void>`               |
 | `logout(options?)`         | `Promise<void>`               |
+| `signIn(credentials)`      | `Promise<void>`               |
 | `register(options?)`       | `Promise<void>`               |
 | `accountManagement()`      | `Promise<void>`               |
 | `updatePassword(options?)` | `Promise<void>`               |
@@ -143,7 +145,7 @@ Safe to await repeatedly — it returns the same promise every time.
 
 ## Capabilities
 
-Four signals reporting what the configured adapter supports. See
+Five signals reporting what the configured adapter supports. See
 [Capabilities](../guides/capabilities.mdx).
 
 | Signal              | Guards                |
@@ -152,6 +154,7 @@ Four signals reporting what the configured adapter supports. See
 | `canManageAccount`  | `accountManagement()` |
 | `canUpdatePassword` | `updatePassword()`    |
 | `canLoadProfile`    | `loadProfile()`       |
+| `canSignIn`         | `signIn()`            |
 
 ```ts
 @if (auth.canRegister()) {
@@ -220,6 +223,21 @@ await this.auth.logout({ redirectUri: 'https://app.example.com/goodbye' });
 
 It cannot retract an already-issued access token — see
 [Security](../guides/security.mdx#log-out-where-it-counts).
+
+### `signIn()`
+
+```ts
+signIn(credentials: Credentials): Promise<void>;
+```
+
+Authenticates credentials from the application's own login form, on adapters
+that support it — see [Your own backend](../guides/http-backend.mdx). Rejects with
+[`InvalidCredentialsError`](./ports.mdx#invalidcredentialserror) when the backend
+refuses them, and with `UnsupportedCapabilityError` when `canSignIn()` is `false`.
+
+```ts
+await this.auth.signIn({ username, password });
+```
 
 ### `register()`
 

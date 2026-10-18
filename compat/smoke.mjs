@@ -4,17 +4,21 @@
  * JIT compiler. Type-checking alone would not catch a linker/runtime break.
  *
  * Also asserts the `exports` map resolves the way consumers rely on it, across
- * all three entry points.
+ * all four entry points.
  */
 import '@angular/compiler';
+import { HttpBackend } from '@angular/common/http';
 import { Injector, PLATFORM_ID } from '@angular/core';
+import { Router } from '@angular/router';
 import {
   AUTH_CONFIG,
   AUTH_PROVIDER,
   AuthService,
+  InvalidCredentialsError,
   UnsupportedCapabilityError,
   provideAuth,
   resolveAuthConfiguration,
+  supportsCredentialSignIn,
   supportsProfile,
   supportsRegistration,
 } from '@ismailza/ngx-auth-client';
@@ -26,6 +30,14 @@ import {
   resolveKeycloakConfiguration,
   withKeycloak,
 } from '@ismailza/ngx-auth-client/keycloak';
+import {
+  HTTP_AUTH_CONFIG,
+  HttpAuthProvider,
+  ProfileHttpAuthProvider,
+  decodeJwtPayload,
+  sanitizeReturnUrl,
+  withHttpAuth,
+} from '@ismailza/ngx-auth-client/http';
 import { FakeAuthProvider, withFakeAuth } from '@ismailza/ngx-auth-client/testing';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -69,6 +81,7 @@ assert.equal(await auth.getToken(), 'smoke-token');
 // Capability detection has to work through the linker, not just the type system.
 assert.equal(auth.canRegister(), true);
 assert.equal(auth.canLoadProfile(), true);
+assert.equal(auth.canSignIn(), true);
 assert.equal(auth.profile(), null);
 assert.equal((await auth.loadProfile()).username, 'tester');
 assert.equal(auth.profile().username, 'tester');
@@ -98,12 +111,14 @@ const minimal = {
 
 assert.equal(supportsRegistration(minimal), false);
 assert.equal(supportsProfile(minimal), false);
+assert.equal(supportsCredentialSignIn(minimal), false);
 
 const minimalInjector = Injector.create({
   providers: [{ provide: AUTH_PROVIDER, useValue: minimal }, AuthService],
 });
 const minimalAuth = minimalInjector.get(AuthService);
 assert.equal(minimalAuth.canRegister(), false);
+assert.equal(minimalAuth.canSignIn(), false);
 await assert.rejects(
   () => minimalAuth.register(),
   (error) => error instanceof UnsupportedCapabilityError,
@@ -155,6 +170,44 @@ assert.deepEqual(
 assert.equal(resolveKeycloakConfiguration({ url: 'u', realm: 'r', clientId: 'c' }).pkceMethod, 'S256');
 assert.equal(resolveAuthConfiguration(undefined).forbiddenRoute, '/forbidden');
 
+// --- /http -----------------------------------------------------------------
+
+// The adapter is constructed on the server platform with stand-ins for the
+// router and the HTTP backend: neither is touched before a browser-only call,
+// and that is exactly the SSR guarantee being checked.
+const httpInjector = (endpoints) =>
+  Injector.create({
+    providers: [
+      ...withHttpAuth({ endpoints, minTokenValidity: 45 }).providers,
+      { provide: PLATFORM_ID, useValue: 'server' },
+      { provide: Router, useValue: {} },
+      { provide: HttpBackend, useValue: { handle: () => assert.fail('no request on the server') } },
+    ],
+  });
+
+const httpEndpoints = { signIn: '/api/auth/login', refresh: '/api/auth/refresh' };
+const httpProviderInjector = httpInjector(httpEndpoints);
+assert.equal(httpProviderInjector.get(HTTP_AUTH_CONFIG).minTokenValidity, 45);
+
+const httpProvider = httpProviderInjector.get(AUTH_PROVIDER);
+assert.ok(httpProvider instanceof HttpAuthProvider);
+assert.equal(supportsCredentialSignIn(httpProvider), true);
+// No profile endpoint → no `loadProfile()`, so the capability is not claimed.
+assert.equal(supportsProfile(httpProvider), false);
+
+await httpProvider.init();
+assert.equal(httpProvider.authenticated(), false);
+await assert.rejects(() => httpProvider.getToken());
+
+const profileProvider = httpInjector({ ...httpEndpoints, profile: '/api/auth/me' }).get(AUTH_PROVIDER);
+assert.ok(profileProvider instanceof ProfileHttpAuthProvider);
+assert.equal(supportsProfile(profileProvider), true);
+
+assert.equal(decodeJwtPayload(`h.${Buffer.from('{"sub":"u1"}').toString('base64url')}.s`).sub, 'u1');
+assert.equal(sanitizeReturnUrl('//evil.example'), '/');
+assert.equal(sanitizeReturnUrl('/admin'), '/admin');
+assert.ok(new InvalidCredentialsError() instanceof Error);
+
 // --- exports map -----------------------------------------------------------
 
 // `./package.json` is exported so tooling can read the manifest.
@@ -168,6 +221,7 @@ assert.equal(manifest.peerDependenciesMeta?.['keycloak-js']?.optional, true);
 for (const specifier of [
   '@ismailza/ngx-auth-client/lib/auth.service',
   '@ismailza/ngx-auth-client/keycloak/lib/with-keycloak',
+  '@ismailza/ngx-auth-client/http/lib/with-http-auth',
   '@ismailza/ngx-auth-client/testing/lib/fake-auth.provider',
 ]) {
   await assert.rejects(

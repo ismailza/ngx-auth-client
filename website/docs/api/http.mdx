@@ -1,0 +1,141 @@
+---
+id: http
+title: HTTP entry point
+description: API reference for @ismailza/ngx-auth-client/http — withHttpAuth(), HttpAuthConfiguration, the HTTP adapters, sanitizeReturnUrl() and decodeJwtPayload().
+---
+
+# HTTP entry point
+
+```ts
+import {
+  withHttpAuth,
+  sanitizeReturnUrl,
+  decodeJwtPayload,
+  HttpAuthProvider,
+  ProfileHttpAuthProvider,
+  HTTP_AUTH_CONFIG,
+  HTTP_AUTH_CONFIGURATION_DEFAULTS,
+  type HttpAuthConfiguration,
+  type HttpAuthEndpoints,
+  type HttpAuthTokenResponse,
+} from '@ismailza/ngx-auth-client/http';
+```
+
+No extra peer dependency. Requires `provideHttpClient()` and `provideRouter()`.
+See the [guide](../guides/http-backend.mdx) for the backend contract.
+
+## `withHttpAuth()`
+
+```ts
+function withHttpAuth(config: HttpAuthConfiguration): AuthFeature;
+```
+
+Configures your own backend as the identity provider. Pass the result to
+`provideAuth()`.
+
+```ts
+provideAuth(
+  withHttpAuth({
+    endpoints: {
+      signIn: '/api/auth/login',
+      refresh: '/api/auth/refresh',
+      logout: '/api/auth/logout',
+    },
+  }),
+);
+```
+
+Provides `ProfileHttpAuthProvider` when `endpoints.profile` is set, and
+`HttpAuthProvider` otherwise.
+
+## `HttpAuthConfiguration`
+
+| Option              | Type                                       | Default                       | Description                                                                                             |
+| ------------------- | ------------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `endpoints`         | [`HttpAuthEndpoints`](#httpauthendpoints)  | —                             | **Required.** Backend endpoints                                                                         |
+| `loginRoute`        | `string`                                   | `'/login'`                    | App route hosting the login form; `login()` navigates here                                              |
+| `returnUrlParam`    | `string`                                   | `'returnUrl'`                 | Query parameter carrying the page the user wanted                                                       |
+| `postLogoutRoute`   | `string`                                   | `'/'`                         | Where `logout()` lands without a `redirectUri`                                                          |
+| `withCredentials`   | `boolean`                                  | `true`                        | Send cookies with auth requests — needed cross-origin                                                   |
+| `minTokenValidity`  | `number`                                   | `30`                          | Seconds ahead of expiry to refresh, capped at half the lifetime                                         |
+| `rejectionStatuses` | `readonly number[]`                        | `[401]`                       | Statuses meaning bad credentials / no session                                                           |
+| `xsrf`              | `{ cookieName?, headerName? } \| false`    | `XSRF-TOKEN` / `X-XSRF-TOKEN` | XSRF header on same-origin `POST`s                                                                      |
+| `headers`           | `Readonly<Record<string, string>>`         | `{}`                          | Static headers on every auth request                                                                    |
+| `mapTokenResponse`  | `(body: unknown) => HttpAuthTokenResponse` | `defaultMapTokenResponse`     | Reads the token from a `signIn`/`refresh` response                                                      |
+| `mapRoles`          | `(claims: Claims) => readonly string[]`    | `defaultMapRoles`             | Reads roles — `roles` claim, then `authorities`; strings, `{ authority }` objects or a delimited string |
+| `mapProfile`        | `(body: unknown) => UserProfile`           | `defaultMapProfile`           | Maps the `profile` response                                                                             |
+
+## `HttpAuthEndpoints`
+
+| Field     | Method | Description                                                             |
+| --------- | ------ | ----------------------------------------------------------------------- |
+| `signIn`  | `POST` | **Required.** Credentials in, access token out; sets the refresh cookie |
+| `refresh` | `POST` | **Required.** Refresh cookie in, access token out                       |
+| `logout`  | `POST` | Ends the server session and clears the cookie                           |
+| `profile` | `GET`  | User profile. Enables `loadProfile()`                                   |
+
+URLs are used exactly as given: auth requests bypass `HttpClient` interceptors.
+The adapter adds the XSRF header and `headers` itself.
+
+## `HttpAuthTokenResponse`
+
+```ts
+interface HttpAuthTokenResponse {
+  readonly accessToken: string;
+  /** Seconds. Preferred over the JWT `exp` claim. */
+  readonly expiresIn?: number;
+  /** Supply for opaque tokens; otherwise decoded from the JWT. */
+  readonly claims?: Claims;
+}
+```
+
+## `HttpAuthProvider`
+
+The adapter. Implements `AuthProvider` and
+[`SupportsCredentialSignIn`](./ports.mdx#supportscredentialsignin).
+
+| Member             | Behaviour                                                                              |
+| ------------------ | -------------------------------------------------------------------------------------- |
+| `init()`           | Calls `refresh` to restore the session. No-op on the server                            |
+| `getToken()`       | Returns the token, refreshing first if near expiry. Concurrent calls share one refresh |
+| `signIn(creds)`    | Calls `signIn`. Rejects with `InvalidCredentialsError` on a `rejectionStatuses` code   |
+| `login(options?)`  | Navigates to `loginRoute`, passing an in-app `returnUrl`; off-site URLs are dropped    |
+| `logout(options?)` | Clears locally, calls `logout`, navigates. Rejects if the backend call failed          |
+
+Subclasses can override the protected `onSessionChange(session, reason)` hook,
+where `reason` is `'signIn'`, `'refresh'`, `'logout'` or `'expired'`. It is
+not called when nothing changed, such as a refused refresh on an anonymous
+page load.
+
+## `ProfileHttpAuthProvider`
+
+`HttpAuthProvider` plus [`SupportsProfile`](./ports.mdx#supportsprofile).
+`loadProfile()` calls `endpoints.profile` with the bearer token; the profile is
+cleared on sign-in, logout and expiry.
+
+## `sanitizeReturnUrl()`
+
+```ts
+function sanitizeReturnUrl(value: unknown, fallback = '/'): string;
+```
+
+Returns `value` when it is an in-app path, and `fallback` otherwise. Rejects
+absolute URLs, `//host`, `/\host` and control characters. Use it on the login
+page before navigating to `returnUrl`.
+
+## `decodeJwtPayload()`
+
+```ts
+function decodeJwtPayload(token: string): Claims;
+```
+
+Decodes a JWT payload (base64url, UTF-8) **without verifying the signature**.
+Throws on anything that is not a three-part token with a JSON object payload.
+
+## `HTTP_AUTH_CONFIG`
+
+```ts
+const HTTP_AUTH_CONFIG: InjectionToken<ResolvedHttpAuthConfiguration>;
+```
+
+The resolved configuration, with defaults applied.

@@ -10,6 +10,7 @@
   "include": [
     "src/**/*.d.ts",
     "src/**/*.spec.ts",
+    "http/**/*.spec.ts",
     "keycloak/**/*.spec.ts",
     "testing/**/*.spec.ts"
   ]

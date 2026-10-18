@@ -17,7 +17,7 @@ three checks — each covering something the previous one cannot:
 The supported majors are derived from the library's `@angular/core` peer range,
 so the matrix cannot drift from what is published.
 
-All three entry points are covered — the core, `/keycloak` and `/testing`.
+All four entry points are covered — the core, `/keycloak`, `/http` and `/testing`.
 `keycloak-js` is installed into the fixture from the library's own optional peer
 range; without it the `/keycloak` entry point would not be in the matrix at all.
 
@@ -41,7 +41,7 @@ while. CI fans the majors out across parallel jobs.
 | `src/adapter.ts`       | a third-party `AuthProvider` — the contributor-facing contract          |
 | `src/services.ts`      | a service injecting `AuthService`, reading every signal                 |
 | `src/routes.ts`        | `Routes` using `authGuard` and `AuthRouteData`                          |
-| `src/providers.ts`     | `appConfig` wiring `provideAuth(withKeycloak(...))` and the interceptor |
+| `src/providers.ts`     | `appConfig` wiring `provideAuth(withKeycloak(...))` and the interceptor, plus a `withHttpAuth(...)` setup |
 | `src/testing-usage.ts` | the `/testing` entry point, composed as a spec would                    |
 | `src/index.ts`         | barrel — the `ngc` entry point                                          |
 | `src/browser.ts`       | the `ng build` entry point                                              |

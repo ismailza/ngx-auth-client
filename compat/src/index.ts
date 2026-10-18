@@ -7,7 +7,8 @@
  * the library ships no declarables, so DI, the public types, the guard and the
  * interceptor are the entire compatibility surface.
  *
- * All three entry points are exercised — the core, `/keycloak` and `/testing`.
+ * All four entry points are exercised — the core, `/keycloak`, `/http` and
+ * `/testing`.
  */
 export * from './adapter';
 export * from './models';

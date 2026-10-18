@@ -14,6 +14,9 @@
       "@ismailza/ngx-auth-client": [
         "./projects/ngx-auth-client/src/public-api.ts"
       ],
+      "@ismailza/ngx-auth-client/http": [
+        "./projects/ngx-auth-client/http/src/public-api.ts"
+      ],
       "@ismailza/ngx-auth-client/keycloak": [
         "./projects/ngx-auth-client/keycloak/src/public-api.ts"
       ],
