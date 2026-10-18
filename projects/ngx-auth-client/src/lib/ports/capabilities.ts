@@ -101,11 +101,24 @@ export class UnsupportedCapabilityError extends Error {
   constructor(readonly capability: string) {
     super(
       `The configured auth provider does not support "${capability}". ` +
-        `Check AuthService.can${capability.charAt(0).toUpperCase()}${capability.slice(1)}() before calling it.`,
+        `Check ${CAPABILITY_SIGNALS[capability] ?? 'the matching AuthService.can*() signal'} before calling it.`,
     );
     this.name = 'UnsupportedCapabilityError';
   }
 }
+
+/**
+ * The `AuthService` signal that guards each capability. Spelled out because
+ * the names don't derive from one another — `registration` is guarded by
+ * `canRegister()`, `profile` by `canLoadProfile()`.
+ */
+const CAPABILITY_SIGNALS: Readonly<Record<string, string>> = {
+  registration: 'AuthService.canRegister()',
+  accountManagement: 'AuthService.canManageAccount()',
+  passwordUpdate: 'AuthService.canUpdatePassword()',
+  profile: 'AuthService.canLoadProfile()',
+  signIn: 'AuthService.canSignIn()',
+};
 
 /**
  * Thrown by {@link SupportsCredentialSignIn.signIn} when the backend rejects

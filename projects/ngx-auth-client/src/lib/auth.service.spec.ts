@@ -189,9 +189,33 @@ describe('AuthService', () => {
       ).rejects.toBeInstanceOf(UnsupportedCapabilityError);
     });
 
-    it('names the matching can* signal in UnsupportedCapabilityError', () => {
-      expect(new UnsupportedCapabilityError('signIn').message).toContain(
-        'AuthService.canSignIn()',
+    it.each([
+      ['registration', 'canRegister', (auth: AuthService) => auth.register()],
+      ['accountManagement', 'canManageAccount', (auth: AuthService) => auth.accountManagement()],
+      ['passwordUpdate', 'canUpdatePassword', (auth: AuthService) => auth.updatePassword()],
+      ['profile', 'canLoadProfile', (auth: AuthService) => auth.loadProfile()],
+      [
+        'signIn',
+        'canSignIn',
+        (auth: AuthService) => auth.signIn({ username: 'u', password: 'p' }),
+      ],
+    ] as const)(
+      'points %s at the AuthService.%s() signal that exists',
+      async (capability, signalName, call) => {
+        const auth = setup(withMinimalAuth());
+        expect(typeof auth[signalName]).toBe('function');
+
+        const error = await call(auth).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(UnsupportedCapabilityError);
+        expect((error as UnsupportedCapabilityError).capability).toBe(capability);
+        expect((error as Error).message).toContain(`AuthService.${signalName}()`);
+      },
+    );
+
+    it('falls back to a generic hint for an unknown capability', () => {
+      expect(new UnsupportedCapabilityError('teleport').message).toContain(
+        'the matching AuthService.can*() signal',
       );
     });
   });
